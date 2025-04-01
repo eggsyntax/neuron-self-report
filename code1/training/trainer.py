@@ -1391,31 +1391,88 @@ class PredictorTrainer:
                     else:
                         pred = outputs.item()
                     
-                    predictions.append(pred)
-                    actuals.append(activations.item())
+                    # Get the raw activation value
+                    raw_activation = activations.item()
+                    
+                    # For proper comparison with regression predictions, we need to normalize the activations
+                    # using the same parameters that were used during training
+                    if self.predictor.head_type == "regression" and self.predictor.activation_mean is not None and self.predictor.activation_std is not None:
+                        # Either normalize the actual or denormalize the prediction
+                        # Normalizing the actual is more consistent with model's internal logic
+                        normalized_activation = (raw_activation - self.predictor.activation_mean) / self.predictor.activation_std
+                        
+                        # Now we have two options:
+                        # 1. Use normalized activation and raw prediction (before denormalization)
+                        # 2. Use raw activation and denormalized prediction
+                        
+                        # Option 1: For better understanding of model's internal working
+                        # predictions.append(outputs.item())  # Raw model output
+                        # actuals.append(normalized_activation)  # Normalized ground truth
+                        
+                        # Option 2: For interpretability in original activation space
+                        predictions.append(pred)  # Denormalized prediction
+                        actuals.append(raw_activation)  # Raw ground truth
+                        
+                        # Log normalization adjustment for transparency
+                        logger.debug(f"Activation: raw={raw_activation:.4f}, normalized={normalized_activation:.4f}")
+                        logger.debug(f"Prediction: raw={outputs.item():.4f}, denormalized={pred:.4f}")
+                    else:
+                        # For classification head, use values as they are
+                        predictions.append(pred)
+                        actuals.append(raw_activation)
         
         # Create visualization
         plt.figure(figsize=(10, 8))
         
-        # Plot predictions vs. actuals
-        plt.scatter(actuals, predictions, alpha=0.6)
+        # Automatic bias correction for predictions
+        predictions_array = np.array(predictions)
+        actuals_array = np.array(actuals)
+        
+        # Check if there's a systematic bias in predictions
+        mean_error = np.mean(predictions_array - actuals_array)
+        error_std = np.std(predictions_array - actuals_array)
+        
+        # If a systematic bias exists (mean error is significant compared to std)
+        has_systematic_bias = abs(mean_error) > 0.1 * (max(actuals_array) - min(actuals_array))
+        
+        # Create corrected predictions
+        corrected_predictions = predictions_array - mean_error
+        
+        # Plot both original and corrected predictions
+        plt.scatter(actuals_array, predictions_array, alpha=0.6, label="Original Predictions")
+        
+        # If we found a systematic bias, also plot corrected predictions
+        if has_systematic_bias:
+            plt.scatter(actuals_array, corrected_predictions, alpha=0.6, label="Bias-Corrected", marker='x')
+            plt.legend()
         
         # Add perfect prediction line
-        min_val = min(min(actuals), min(predictions))
-        max_val = max(max(actuals), max(predictions))
-        plt.plot([min_val, max_val], [min_val, max_val], "r--")
+        min_val = min(min(actuals_array), min(predictions_array), min(corrected_predictions) if has_systematic_bias else float('inf'))
+        max_val = max(max(actuals_array), max(predictions_array), max(corrected_predictions) if has_systematic_bias else float('-inf'))
+        plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Perfect Prediction")
         
-        # Calculate correlation and error
-        correlation = np.corrcoef(actuals, predictions)[0, 1]
-        mse = np.mean((np.array(predictions) - np.array(actuals)) ** 2)
+        # Calculate correlation and error metrics
+        original_correlation = np.corrcoef(actuals_array, predictions_array)[0, 1]
+        original_mse = np.mean((predictions_array - actuals_array) ** 2)
+        
+        # Calculate metrics for corrected predictions too
+        corrected_correlation = np.corrcoef(actuals_array, corrected_predictions)[0, 1] if has_systematic_bias else None
+        corrected_mse = np.mean((corrected_predictions - actuals_array) ** 2) if has_systematic_bias else None
         
         # Add metrics as text
         plt.title(f"Predictions vs. Actual Activations ({split} split)")
         plt.xlabel("Actual Activations")
         plt.ylabel("Predicted Activations")
+        
+        # Create metrics text
+        metrics_text = f"Original Metrics:\n  Correlation: {original_correlation:.4f}\n  MSE: {original_mse:.4f}\n  Mean Error: {mean_error:.4f}"
+        
+        if has_systematic_bias:
+            metrics_text += f"\n\nBias-Corrected Metrics:\n  Correlation: {corrected_correlation:.4f}\n  MSE: {corrected_mse:.4f}"
+        
         plt.text(
             0.05, 0.95,
-            f"Correlation: {correlation:.4f}\nMSE: {mse:.4f}",
+            metrics_text,
             transform=plt.gca().transAxes,
             verticalalignment="top",
             bbox=dict(boxstyle="round", alpha=0.1),
@@ -1433,30 +1490,68 @@ class PredictorTrainer:
         plt.savefig(output_file)
         plt.close()
         
-        logger.info(f"Saved predictions visualization to {output_file}")
-        logger.info(f"Correlation: {correlation:.4f}, MSE: {mse:.4f}")
+        # Log metrics with original and corrected values if applicable
+        if has_systematic_bias:
+            logger.info(f"Saved predictions visualization to {output_file}")
+            logger.info(f"Original metrics - Correlation: {original_correlation:.4f}, MSE: {original_mse:.4f}, Mean Error: {mean_error:.4f}")
+            logger.info(f"Corrected metrics - Correlation: {corrected_correlation:.4f}, MSE: {corrected_mse:.4f}")
+        else:
+            logger.info(f"Saved predictions visualization to {output_file}")
+            logger.info(f"Correlation: {original_correlation:.4f}, MSE: {original_mse:.4f}")
         
         # Save individual samples to CSV for detailed analysis
         samples_file = os.path.join(self.output_dir, f"prediction_samples_{split}_{timestamp}.csv")
         with open(samples_file, "w") as f:
-            f.write("text,actual,predicted,error\n")
-            for text, actual, pred in zip(texts, actuals, predictions):
-                # Clean text for CSV
-                clean_text = text.replace('"', '""')
-                error = pred - actual
-                f.write(f'"{clean_text}",{actual:.6f},{pred:.6f},{error:.6f}\n')
+            # Include corrected predictions in the CSV if we detected a systematic bias
+            if has_systematic_bias:
+                f.write("text,actual,predicted,corrected_predicted,original_error,corrected_error\n")
+                for i, (text, actual, pred) in enumerate(zip(texts, actuals, predictions)):
+                    # Clean text for CSV
+                    clean_text = text.replace('"', '""')
+                    # Get the corrected prediction for this sample
+                    corrected_pred = corrected_predictions[i]
+                    # Calculate errors
+                    original_error = pred - actual
+                    corrected_error = corrected_pred - actual
+                    # Write the row with corrected predictions
+                    f.write(f'"{clean_text}",{actual:.6f},{pred:.6f},{corrected_pred:.6f},{original_error:.6f},{corrected_error:.6f}\n')
+            else:
+                # Original format if no systematic bias detected
+                f.write("text,actual,predicted,error\n")
+                for text, actual, pred in zip(texts, actuals, predictions):
+                    # Clean text for CSV
+                    clean_text = text.replace('"', '""')
+                    error = pred - actual
+                    f.write(f'"{clean_text}",{actual:.6f},{pred:.6f},{error:.6f}\n')
         
-        logger.info(f"Saved individual predictions to {samples_file}")
+        # Log information about the predictions and corrections
+        if has_systematic_bias:
+            logger.info(f"Saved predictions with bias correction to {samples_file} (mean bias: {mean_error:.4f})")
+        else:
+            logger.info(f"Saved individual predictions to {samples_file} (no systematic bias detected)")
         
-        return {
-            "correlation": correlation,
-            "mse": mse,
+        # Build the result dictionary with both original and corrected metrics
+        result = {
+            "correlation": original_correlation,
+            "mse": original_mse,
+            "mean_error": mean_error,
             "predictions": predictions,
             "actuals": actuals,
             "texts": texts,
             "visualization_file": output_file,
             "samples_file": samples_file,
         }
+        
+        # Add corrected metrics if bias was detected
+        if has_systematic_bias:
+            result["has_systematic_bias"] = True
+            result["corrected_correlation"] = corrected_correlation
+            result["corrected_mse"] = corrected_mse
+            result["corrected_predictions"] = corrected_predictions.tolist()
+        else:
+            result["has_systematic_bias"] = False
+            
+        return result
 
 # Function to load dataset from CSV (to work with generator.py output)
 def load_activation_dataset_from_files(

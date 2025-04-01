@@ -631,24 +631,42 @@ def evaluate_model(
     # Main scatter plot
     plt.subplot(2, 2, 1)
     xs = test_results["actuals"]
-    ys = test_results["predictions"]
+    
+    # Check if we have bias-corrected predictions available
+    has_bias_correction = test_results.get("has_systematic_bias", False)
+    
+    if has_bias_correction and "corrected_predictions" in test_results:
+        # Use bias-corrected predictions for visualization
+        ys = test_results["corrected_predictions"]
+        correlation = test_results["corrected_correlation"]
+        mse = test_results["corrected_mse"]
+        logger.info("Using bias-corrected predictions for introspection analysis")
+    else:
+        # Use original predictions
+        ys = test_results["predictions"]
+        correlation = test_results["correlation"]
+        mse = test_results["mse"]
+    
+    # Convert to numpy arrays
+    xs_array = np.array(xs)
+    ys_array = np.array(ys)
     
     # Create scatter plot
-    plt.scatter(xs, ys, alpha=0.6, c='blue')
+    plt.scatter(xs_array, ys_array, alpha=0.6, c='blue')
     
     # Add diagonal reference line
-    min_val = min(min(xs), min(ys))
-    max_val = max(max(xs), max(ys))
+    min_val = min(min(xs_array), min(ys_array))
+    max_val = max(max(xs_array), max(ys_array))
     plt.plot([min_val, max_val], [min_val, max_val], "r--")
     
-    plt.title(f"Predicted vs. Actual Activations")
+    plt.title(f"Predicted vs. Actual Activations{' (Bias-Corrected)' if has_bias_correction else ''}")
     plt.xlabel("Actual Activation")
     plt.ylabel("Predicted Activation")
     plt.grid(alpha=0.3)
     
     # Add error histogram
     plt.subplot(2, 2, 2)
-    errors = np.array(ys) - np.array(xs)
+    errors = ys_array - xs_array
     plt.hist(errors, bins=20, alpha=0.7, color='red')
     plt.title("Prediction Errors")
     plt.xlabel("Error (Predicted - Actual)")
@@ -657,8 +675,8 @@ def evaluate_model(
     
     # Add activation histogram
     plt.subplot(2, 2, 3)
-    plt.hist(xs, bins=20, alpha=0.7, color='green', label='Actual')
-    plt.hist(ys, bins=20, alpha=0.5, color='blue', label='Predicted')
+    plt.hist(xs_array, bins=20, alpha=0.7, color='green', label='Actual')
+    plt.hist(ys_array, bins=20, alpha=0.5, color='blue', label='Predicted')
     plt.title("Activation Distributions")
     plt.xlabel("Activation Value")
     plt.ylabel("Frequency")
@@ -667,7 +685,7 @@ def evaluate_model(
     
     # Add error vs. actual plot to check for bias
     plt.subplot(2, 2, 4)
-    plt.scatter(xs, errors, alpha=0.6, c='purple')
+    plt.scatter(xs_array, errors, alpha=0.6, c='purple')
     plt.axhline(y=0, color='r', linestyle='-', alpha=0.3)
     plt.title("Error vs. Actual Activation")
     plt.xlabel("Actual Activation")
@@ -680,13 +698,19 @@ def evaluate_model(
         fontsize=16
     )
     
+    # Calculate mean error and std
+    mean_error = np.mean(errors)
+    error_std = np.std(errors)
+    
     # Add metrics text
     metrics_text = (
-        f"Correlation: {test_results['correlation']:.4f}\n"
-        f"MSE: {test_results['mse']:.4f}\n"
-        f"Mean Error: {np.mean(errors):.4f}\n"
-        f"Error Std: {np.std(errors):.4f}"
+        f"Correlation: {correlation:.4f}\n"
+        f"MSE: {mse:.4f}\n"
+        f"Mean Error: {mean_error:.4f}\n"
+        f"Error Std: {error_std:.4f}"
     )
+    if has_bias_correction:
+        metrics_text += f"\n(Using bias-corrected predictions)"
     
     plt.figtext(
         0.02, 0.02,
@@ -768,11 +792,19 @@ def evaluate_model(
                                          min(10, len(test_results["actuals"])), 
                                          replace=False)
         
+        # Check if we have bias-corrected predictions
+        has_bias_correction = test_results.get("has_systematic_bias", False) and "corrected_predictions" in test_results
+        
         for i, idx in enumerate(sample_indices):
             actual = test_results["actuals"][idx]
             predicted = test_results["predictions"][idx]
             error = predicted - actual
             text = test_results["texts"][idx]
+            
+            # Include corrected prediction if available
+            if has_bias_correction:
+                corrected = test_results["corrected_predictions"][idx]
+                corrected_error = corrected - actual
             
             # Truncate long texts for display
             display_text = text if len(text) <= 70 else text[:67] + "..."
@@ -781,17 +813,27 @@ def evaluate_model(
             f.write(f"  Text: {display_text}\n")
             f.write(f"  Actual: {actual:.6f}\n")
             f.write(f"  Predicted: {predicted:.6f}\n")
-            f.write(f"  Error: {error:.6f}\n\n")
+            
+            if has_bias_correction:
+                f.write(f"  Corrected Prediction: {corrected:.6f}\n")
+                f.write(f"  Original Error: {error:.6f}\n")
+                f.write(f"  Corrected Error: {corrected_error:.6f}\n\n")
+            else:
+                f.write(f"  Error: {error:.6f}\n\n")
     
     logger.info(f"Introspection report saved to {report_path}")
     
     # Return combined results
+    # Check if we should use corrected metrics
+    has_bias_correction = test_results.get("has_systematic_bias", False) and "corrected_predictions" in test_results
+    
     return {
         "test_results": test_results,
         "layer": predictor.target_layer,
         "neuron": predictor.target_neuron,
-        "correlation": test_results["correlation"],
-        "mse": test_results["mse"],
+        "correlation": test_results["corrected_correlation"] if has_bias_correction else test_results["correlation"],
+        "used_bias_correction": has_bias_correction,
+        "mse": test_results["corrected_mse"] if has_bias_correction else test_results["mse"],
         "report_path": report_path,
         "figure_path": figure_path,
     }

@@ -249,7 +249,7 @@
   ],
   "best_val_loss": 8.53891897201538,
   "best_epoch": 20,
-  "train_time": 350.00968194007874,
+  "train_time": 355.45271706581116,
   "unfreezing": {
     "strategy": "none",
     "total_params": 163049041,

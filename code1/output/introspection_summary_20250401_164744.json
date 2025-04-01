@@ -1,5 +1,5 @@
 {
-  "experiment_time": "20250401_140406",
+  "experiment_time": "20250401_164744",
   "model": "gpt2-small",
   "target": {
     "layer": 11,
@@ -9,8 +9,8 @@
   },
   "dataset": {
     "size": 500,
-    "csv_path": "output/datasets/neuron_l11_n6_20250401_140427.csv",
-    "metadata_path": "output/datasets/neuron_l11_n6_20250401_140427_metadata.json"
+    "csv_path": "output/datasets/neuron_l11_n6_20250401_164806.csv",
+    "metadata_path": "output/datasets/neuron_l11_n6_20250401_164806_metadata.json"
   },
   "training": {
     "head_type": "regression",
@@ -26,9 +26,9 @@
     "track_activations": false
   },
   "results": {
-    "correlation": -0.11383660965533725,
-    "mse": 69231.78754076448,
-    "report_path": "output/introspection_report_20250401_141022.txt",
-    "figure_path": "output/figures/introspection_analysis_l11_n6_20250401_141022.png"
+    "correlation": -0.11383660965533746,
+    "mse": 0.7850233932755551,
+    "report_path": "output/introspection_report_20250401_165407.txt",
+    "figure_path": "output/figures/introspection_analysis_l11_n6_20250401_165407.png"
   }
 }

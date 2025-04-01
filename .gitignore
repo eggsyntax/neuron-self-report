@@ -3,5 +3,6 @@ code1/.envrc
 code1/__pycache__/*
 code1/package-lock.json
 code1/output-archive/*
+code1/CLAUDE.md
 
 

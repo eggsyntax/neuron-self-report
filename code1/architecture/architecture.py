@@ -8,6 +8,10 @@ from transformer_lens import HookedTransformer
 import numpy as np
 import os
 import json
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class ActivationHead(nn.Module):
     """Base class for activation prediction heads"""
@@ -490,7 +494,39 @@ class ActivationPredictor(nn.Module):
                 
                 # If we want continuous values, convert using bin centers
                 bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2
-                continuous_preds = np.sum(probs * bin_centers.reshape(1, -1), axis=1)
+                
+                # Handle mismatch between number of classes and bin centers
+                num_classes = probs.shape[1]
+                num_centers = len(bin_centers)
+                
+                if num_classes == num_centers:
+                    # Ideal case: classes match bin centers exactly
+                    continuous_preds = np.sum(probs * bin_centers.reshape(1, -1), axis=1)
+                elif num_classes < num_centers:
+                    # If we have more bin centers than classes, use only the first num_classes centers
+                    # This is safer than extrapolating
+                    bin_centers_subset = bin_centers[:num_classes]
+                    continuous_preds = np.sum(probs * bin_centers_subset.reshape(1, -1), axis=1)
+                    logger.warning(f"More bin centers ({num_centers}) than classes ({num_classes}). Using first {num_classes} centers.")
+                else:
+                    # If we have more classes than bin centers, we need to interpolate or extrapolate
+                    # Let's use linear spacing as a reasonable approach
+                    if num_centers >= 2:
+                        # Get the spacing from existing centers to extrapolate
+                        bin_spacing = (bin_centers[-1] - bin_centers[0]) / (num_centers - 1)
+                        # Create extended bin centers with consistent spacing
+                        extended_centers = np.linspace(
+                            bin_centers[0],
+                            bin_centers[0] + (num_classes - 1) * bin_spacing,
+                            num_classes
+                        )
+                        continuous_preds = np.sum(probs * extended_centers.reshape(1, -1), axis=1)
+                        logger.warning(f"More classes ({num_classes}) than bin centers ({num_centers}). Extrapolating additional centers.")
+                    else:
+                        # Fallback if we don't have enough centers to estimate spacing
+                        continuous_preds = np.argmax(probs, axis=1).astype(float)
+                        logger.warning(f"Cannot properly map classes to continuous values. Using class indices as approximation.")
+                
                 predictions = continuous_preds
             elif self.head_type == "regression" and self.activation_mean is not None and self.activation_std is not None:
                 # For regression, denormalize predictions if normalization parameters are available

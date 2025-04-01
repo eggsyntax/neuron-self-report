@@ -1,4 +1,4 @@
-# trainer.py
+# trainer.py - Enhanced with unfreezing, gradient monitoring, and activation tracking
 
 import os
 import sys
@@ -17,12 +17,26 @@ import logging
 from sklearn.model_selection import train_test_split
 from datetime import datetime
 
-# Get the project root directory (CODE1)
+# Get the project root directory
 project_root = Path(__file__).parent.parent.absolute()
 sys.path.append(str(project_root))
 
 from dataset.generator import ActivationDataset, ActivationDatasetGenerator
 from architecture.architecture import ActivationPredictor
+
+# Import unfreezing utilities
+try:
+    from selective_unfreezing import (
+        apply_unfreezing_strategy, 
+        get_trainable_parameters_info,
+        freeze_entire_model,
+        unfreeze_entire_model,
+        unfreeze_after_layer
+    )
+    UNFREEZING_AVAILABLE = True
+except ImportError:
+    UNFREEZING_AVAILABLE = False
+    print("Warning: Selective unfreezing utilities not available. Using basic freezing only.")
 
 # Configure logging
 logging.basicConfig(
@@ -31,8 +45,527 @@ logging.basicConfig(
 )
 logger = logging.getLogger("trainer")
 
+class GradientTracker:
+    """Tracks gradient flow through the model during training."""
+    
+    def __init__(self, model: nn.Module, track_interval: int = 10):
+        """
+        Initialize gradient tracker.
+        
+        Args:
+            model: Model to track gradients for
+            track_interval: How often to track gradients (in steps)
+        """
+        self.model = model
+        self.track_interval = track_interval
+        self.tracked_gradients = {}
+        self.step_counter = 0
+        self.tracked_steps = []
+        
+        # Register hooks for all parameters
+        self.hooks = []
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                hook = param.register_hook(lambda grad, name=name: self._save_grad_hook(name, grad))
+                self.hooks.append(hook)
+                self.tracked_gradients[name] = []
+    
+    def _save_grad_hook(self, name: str, grad: torch.Tensor):
+        """Hook to save gradient statistics."""
+        # Only save on the tracking interval
+        if self.step_counter % self.track_interval == 0:
+            if grad is not None:
+                # Save basic statistics rather than whole tensors to save memory
+                grad_stats = {
+                    'mean': float(grad.abs().mean().item()),
+                    'std': float(grad.std().item()),
+                    'max': float(grad.abs().max().item()),
+                    'norm': float(grad.norm().item()),
+                    'step': self.step_counter,
+                }
+                self.tracked_gradients[name].append(grad_stats)
+    
+    def step(self):
+        """Record a training step."""
+        if self.step_counter % self.track_interval == 0:
+            self.tracked_steps.append(self.step_counter)
+        self.step_counter += 1
+    
+    def remove_hooks(self):
+        """Remove gradient hooks."""
+        for hook in self.hooks:
+            hook.remove()
+        self.hooks = []
+    
+    def get_layer_gradients(self):
+        """Aggregate gradients by layer."""
+        layer_gradients = {}
+        
+        for name, grad_stats_list in self.tracked_gradients.items():
+            if not grad_stats_list:  # Skip if no gradients recorded
+                continue
+                
+            # Try to extract layer information from parameter name
+            layer = None
+            parts = name.split('.')
+            for i, part in enumerate(parts):
+                if part in ['blocks', 'layers', 'layer'] and i + 1 < len(parts) and parts[i + 1].isdigit():
+                    layer = int(parts[i + 1])
+                    break
+            
+            # Group by component if we couldn't identify the layer
+            if layer is None:
+                if 'head' in name:
+                    component = 'head'
+                elif 'embed' in name:
+                    component = 'embedding'
+                elif 'norm' in name or 'ln' in name:
+                    component = 'normalization'
+                elif 'attn' in name or 'attention' in name:
+                    component = 'attention'
+                elif 'mlp' in name or 'ffn' in name:
+                    component = 'mlp'
+                else:
+                    component = 'other'
+                
+                if component not in layer_gradients:
+                    layer_gradients[component] = []
+                
+                # Append all gradient stats
+                for stats in grad_stats_list:
+                    layer_gradients[component].append(stats)
+            else:
+                # For actual layers, create entries if they don't exist
+                layer_key = f"layer_{layer}"
+                if layer_key not in layer_gradients:
+                    layer_gradients[layer_key] = []
+                
+                # Append all gradient stats
+                for stats in grad_stats_list:
+                    layer_gradients[layer_key].append(stats)
+        
+        # Compute average stats per layer across all recorded steps
+        summary = {}
+        for layer, stats_list in layer_gradients.items():
+            if not stats_list:
+                continue
+                
+            # Group by step first
+            step_groups = {}
+            for stats in stats_list:
+                step = stats['step']
+                if step not in step_groups:
+                    step_groups[step] = []
+                step_groups[step].append(stats)
+            
+            # Average across parameters for each step
+            step_avgs = []
+            for step, step_stats in step_groups.items():
+                avg_stats = {
+                    'step': step,
+                    'mean': np.mean([s['mean'] for s in step_stats]),
+                    'std': np.mean([s['std'] for s in step_stats]),
+                    'max': np.mean([s['max'] for s in step_stats]),
+                    'norm': np.mean([s['norm'] for s in step_stats]),
+                }
+                step_avgs.append(avg_stats)
+            
+            # Sort by step
+            step_avgs.sort(key=lambda x: x['step'])
+            summary[layer] = step_avgs
+        
+        return summary
+    
+    def generate_gradient_plots(self, output_dir: str = '.'):
+        """Generate visualizations of gradient flow."""
+        layer_gradients = self.get_layer_gradients()
+        
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Extract steps for x-axis
+        steps = self.tracked_steps
+        
+        # Generate plots
+        # 1. Mean gradient magnitude by layer
+        plt.figure(figsize=(12, 8))
+        for layer, stats_list in layer_gradients.items():
+            if len(stats_list) != len(steps):
+                # Skip if we don't have data for all steps
+                continue
+                
+            means = [stats['mean'] for stats in stats_list]
+            plt.plot(steps, means, label=layer)
+        
+        plt.title('Mean Gradient Magnitude by Layer')
+        plt.xlabel('Training Step')
+        plt.ylabel('Mean Gradient Magnitude')
+        plt.legend(loc='upper right')
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'gradient_means.png'))
+        plt.close()
+        
+        # 2. Gradient norm by layer
+        plt.figure(figsize=(12, 8))
+        for layer, stats_list in layer_gradients.items():
+            if len(stats_list) != len(steps):
+                continue
+                
+            norms = [stats['norm'] for stats in stats_list]
+            plt.plot(steps, norms, label=layer)
+        
+        plt.title('Gradient Norm by Layer')
+        plt.xlabel('Training Step')
+        plt.ylabel('Gradient Norm')
+        plt.legend(loc='upper right')
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'gradient_norms.png'))
+        plt.close()
+        
+        # 3. Gradient max by layer
+        plt.figure(figsize=(12, 8))
+        for layer, stats_list in layer_gradients.items():
+            if len(stats_list) != len(steps):
+                continue
+                
+            maxes = [stats['max'] for stats in stats_list]
+            plt.plot(steps, maxes, label=layer)
+        
+        plt.title('Maximum Gradient Magnitude by Layer')
+        plt.xlabel('Training Step')
+        plt.ylabel('Max Gradient')
+        plt.legend(loc='upper right')
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'gradient_maxes.png'))
+        plt.close()
+        
+        # Save raw data as JSON for further analysis
+        grad_data = {
+            'steps': steps,
+            'layers': {k: v for k, v in layer_gradients.items()}
+        }
+        
+        with open(os.path.join(output_dir, 'gradient_data.json'), 'w') as f:
+            json.dump(grad_data, f, indent=2)
+        
+        return {
+            'plots': [
+                os.path.join(output_dir, 'gradient_means.png'),
+                os.path.join(output_dir, 'gradient_norms.png'),
+                os.path.join(output_dir, 'gradient_maxes.png'),
+            ],
+            'data': os.path.join(output_dir, 'gradient_data.json')
+        }
+
+class ActivationMonitor:
+    """Monitors neuron activation distributions during training."""
+    
+    def __init__(
+        self, 
+        predictor: ActivationPredictor,
+        dataset: Dataset,
+        batch_size: int = 32,
+        device: str = 'cpu',
+        monitor_interval: int = 5,  # Every N epochs
+    ):
+        """
+        Initialize activation monitor.
+        
+        Args:
+            predictor: ActivationPredictor model
+            dataset: Dataset to monitor activations on
+            batch_size: Batch size for processing
+            device: Device to run on
+            monitor_interval: How often to monitor activations (in epochs)
+        """
+        self.predictor = predictor
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.device = device
+        self.monitor_interval = monitor_interval
+        
+        # Storage for activation distributions
+        self.activations = {}
+        self.epoch_activations = {}
+        self.initial_activations = None
+    
+    def collect_activations(self, epoch: int):
+        """
+        Collect activations for the current epoch.
+        
+        Args:
+            epoch: Current epoch number
+        """
+        # Only collect on the specified interval
+        if epoch % self.monitor_interval != 0 and epoch != 0:
+            return
+        
+        # Create dataloader for efficient processing
+        loader = DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            shuffle=False
+        )
+        
+        all_activations = []
+        
+        # Process dataset
+        self.predictor.eval()
+        with torch.no_grad():
+            for batch in loader:
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                
+                # Get actual neuron activations (not predictions)
+                if hasattr(self.predictor, 'target_layer') and hasattr(self.predictor, 'target_neuron'):
+                    _, activations = self.predictor(
+                        input_ids, 
+                        attention_mask, 
+                        return_activations=True
+                    )
+                    
+                    # Convert to list for storage
+                    all_activations.extend(activations.cpu().numpy().tolist())
+        
+        # Store initial activations separately
+        if epoch == 0:
+            self.initial_activations = np.array(all_activations)
+        
+        # Store all activations
+        self.epoch_activations[epoch] = np.array(all_activations)
+    
+    def generate_activation_plots(self, output_dir: str = '.'):
+        """
+        Generate visualizations of activation distributions.
+        
+        Args:
+            output_dir: Directory to save plots to
+            
+        Returns:
+            Dictionary of plot paths and statistics
+        """
+        if not self.epoch_activations:
+            logger.warning("No activation data collected. Skipping activation plots.")
+            return {}
+        
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Generate distribution plots
+        plots = []
+        
+        # 1. Initial distribution
+        if self.initial_activations is not None:
+            plt.figure(figsize=(10, 6))
+            plt.hist(self.initial_activations, bins=30, alpha=0.7)
+            plt.title(f"Initial Activation Distribution\nLayer {self.predictor.target_layer}, Neuron {self.predictor.target_neuron}")
+            plt.xlabel("Activation Value")
+            plt.ylabel("Frequency")
+            plt.grid(alpha=0.3)
+            
+            # Add statistics
+            mean = np.mean(self.initial_activations)
+            std = np.std(self.initial_activations)
+            min_val = np.min(self.initial_activations)
+            max_val = np.max(self.initial_activations)
+            
+            stats_text = (
+                f"Mean: {mean:.4f}\n"
+                f"Std Dev: {std:.4f}\n"
+                f"Range: [{min_val:.4f}, {max_val:.4f}]"
+            )
+            
+            plt.annotate(
+                stats_text, 
+                xy=(0.95, 0.95),
+                xycoords="axes fraction",
+                ha="right",
+                va="top",
+                bbox=dict(boxstyle="round", alpha=0.1)
+            )
+            
+            initial_plot = os.path.join(output_dir, 'initial_activation_dist.png')
+            plt.tight_layout()
+            plt.savefig(initial_plot)
+            plt.close()
+            plots.append(initial_plot)
+        
+        # 2. Final distribution
+        final_epoch = max(self.epoch_activations.keys())
+        final_activations = self.epoch_activations[final_epoch]
+        
+        plt.figure(figsize=(10, 6))
+        plt.hist(final_activations, bins=30, alpha=0.7)
+        plt.title(f"Final Activation Distribution (Epoch {final_epoch})\nLayer {self.predictor.target_layer}, Neuron {self.predictor.target_neuron}")
+        plt.xlabel("Activation Value")
+        plt.ylabel("Frequency")
+        plt.grid(alpha=0.3)
+        
+        # Add statistics
+        mean = np.mean(final_activations)
+        std = np.std(final_activations)
+        min_val = np.min(final_activations)
+        max_val = np.max(final_activations)
+        
+        stats_text = (
+            f"Mean: {mean:.4f}\n"
+            f"Std Dev: {std:.4f}\n"
+            f"Range: [{min_val:.4f}, {max_val:.4f}]"
+        )
+        
+        plt.annotate(
+            stats_text, 
+            xy=(0.95, 0.95),
+            xycoords="axes fraction",
+            ha="right",
+            va="top",
+            bbox=dict(boxstyle="round", alpha=0.1)
+        )
+        
+        final_plot = os.path.join(output_dir, 'final_activation_dist.png')
+        plt.tight_layout()
+        plt.savefig(final_plot)
+        plt.close()
+        plots.append(final_plot)
+        
+        # 3. Comparison plot (if we have initial activations)
+        if self.initial_activations is not None:
+            plt.figure(figsize=(12, 6))
+            
+            # Initial distribution
+            plt.hist(self.initial_activations, bins=30, alpha=0.5, label=f"Initial", color='blue')
+            
+            # Final distribution
+            plt.hist(final_activations, bins=30, alpha=0.5, label=f"Final (Epoch {final_epoch})", color='red')
+            
+            plt.title(f"Activation Distribution Change\nLayer {self.predictor.target_layer}, Neuron {self.predictor.target_neuron}")
+            plt.xlabel("Activation Value")
+            plt.ylabel("Frequency")
+            plt.legend()
+            plt.grid(alpha=0.3)
+            
+            # Calculate KL divergence or other distribution metrics
+            # Use histograms for approximation
+            hist_initial, bin_edges = np.histogram(self.initial_activations, bins=30, density=True)
+            hist_final, _ = np.histogram(final_activations, bins=bin_edges, density=True)
+            
+            # Add small epsilon to avoid division by zero
+            hist_initial = hist_initial + 1e-10
+            hist_final = hist_final + 1e-10
+            
+            # Normalize
+            hist_initial = hist_initial / np.sum(hist_initial)
+            hist_final = hist_final / np.sum(hist_final)
+            
+            # Calculate KL divergence: KL(P||Q) = sum(P * log(P/Q))
+            kl_divergence = np.sum(hist_initial * np.log(hist_initial / hist_final))
+            
+            # Calculate other statistics
+            initial_mean = np.mean(self.initial_activations)
+            initial_std = np.std(self.initial_activations)
+            final_mean = np.mean(final_activations)
+            final_std = np.std(final_activations)
+            
+            # Mean shift
+            mean_shift = final_mean - initial_mean
+            # Std deviation change (as percentage)
+            std_change_pct = (final_std - initial_std) / initial_std * 100 if initial_std != 0 else float('inf')
+            
+            comparison_stats = {
+                'kl_divergence': float(kl_divergence),
+                'initial_mean': float(initial_mean),
+                'initial_std': float(initial_std),
+                'final_mean': float(final_mean),
+                'final_std': float(final_std),
+                'mean_shift': float(mean_shift),
+                'std_change_pct': float(std_change_pct),
+            }
+            
+            # Add comparison statistics
+            stats_text = (
+                f"KL Divergence: {kl_divergence:.4f}\n"
+                f"Mean Shift: {mean_shift:.4f}\n"
+                f"StdDev Change: {std_change_pct:.1f}%\n"
+                f"Initial: μ={initial_mean:.4f}, σ={initial_std:.4f}\n"
+                f"Final: μ={final_mean:.4f}, σ={final_std:.4f}"
+            )
+            
+            plt.annotate(
+                stats_text, 
+                xy=(0.95, 0.95),
+                xycoords="axes fraction",
+                ha="right",
+                va="top",
+                bbox=dict(boxstyle="round", alpha=0.1)
+            )
+            
+            comparison_plot = os.path.join(output_dir, 'activation_distribution_change.png')
+            plt.tight_layout()
+            plt.savefig(comparison_plot)
+            plt.close()
+            plots.append(comparison_plot)
+            
+            # 4. Generate evolution plot
+            if len(self.epoch_activations) > 2:
+                # Track statistics over epochs
+                epochs = sorted(self.epoch_activations.keys())
+                means = [np.mean(self.epoch_activations[e]) for e in epochs]
+                stds = [np.std(self.epoch_activations[e]) for e in epochs]
+                
+                # Create a 2-panel plot
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+                
+                # Plot mean evolution
+                ax1.plot(epochs, means, 'o-', color='blue')
+                ax1.set_ylabel('Mean Activation')
+                ax1.set_title(f'Evolution of Activation Distribution\nLayer {self.predictor.target_layer}, Neuron {self.predictor.target_neuron}')
+                ax1.grid(alpha=0.3)
+                
+                # Plot std evolution
+                ax2.plot(epochs, stds, 'o-', color='red')
+                ax2.set_xlabel('Epoch')
+                ax2.set_ylabel('Activation StdDev')
+                ax2.grid(alpha=0.3)
+                
+                evolution_plot = os.path.join(output_dir, 'activation_evolution.png')
+                plt.tight_layout()
+                plt.savefig(evolution_plot)
+                plt.close()
+                plots.append(evolution_plot)
+        
+        # Save raw data for further analysis
+        activation_data = {
+            'target_layer': self.predictor.target_layer,
+            'target_neuron': self.predictor.target_neuron,
+            'initial_activations': self.initial_activations.tolist() if self.initial_activations is not None else None,
+            'final_activations': final_activations.tolist(),
+            'epoch_statistics': {
+                epoch: {
+                    'mean': float(np.mean(activations)),
+                    'std': float(np.std(activations)),
+                    'min': float(np.min(activations)),
+                    'max': float(np.max(activations)),
+                }
+                for epoch, activations in self.epoch_activations.items()
+            },
+            'comparison_statistics': comparison_stats if self.initial_activations is not None else None,
+        }
+        
+        data_file = os.path.join(output_dir, 'activation_data.json')
+        with open(data_file, 'w') as f:
+            json.dump(activation_data, f, indent=2)
+        
+        return {
+            'plots': plots,
+            'data': data_file,
+            'statistics': comparison_stats if self.initial_activations is not None else None,
+        }
+
 class PredictorTrainer:
-    """Trainer for ActivationPredictor models"""
+    """Trainer for ActivationPredictor models with enhanced monitoring"""
 
     def __init__(
         self,
@@ -96,6 +629,10 @@ class PredictorTrainer:
         self.train_loader = None
         self.val_loader = None
         self.test_loader = None
+        
+        # No monitors yet
+        self.gradient_tracker = None
+        self.activation_monitor = None
 
     def prepare_data(
         self,
@@ -196,10 +733,17 @@ class PredictorTrainer:
         log_interval: int = 10,
         save_best: bool = True,
         eval_during_training: bool = True,
-        freeze_base_model: bool = True,
+        track_gradients: bool = False,
+        track_activations: bool = False,
+        activation_monitor_interval: int = 5,
+        gradient_track_interval: int = 50,
+        unfreeze_strategy: str = "none",
+        unfreeze_from_layer: Optional[int] = None,
+        unfreeze_components: Optional[Union[str, List[str]]] = None,
+        freeze_base_model: bool = False,  # For backward compatibility
     ) -> Dict:
         """
-        Train the activation predictor model.
+        Train the activation predictor model with enhanced monitoring and unfreezing.
 
         Args:
             epochs: Number of training epochs
@@ -213,19 +757,76 @@ class PredictorTrainer:
             log_interval: Logging interval in steps
             save_best: Whether to save the best model
             eval_during_training: Whether to evaluate on validation set during training
-            freeze_base_model: Whether to freeze the base transformer model
+            track_gradients: Whether to track gradient flow during training
+            track_activations: Whether to track neuron activation distributions
+            activation_monitor_interval: How often to monitor activations (in epochs)
+            gradient_track_interval: How often to track gradients (in steps)
+            unfreeze_strategy: Strategy for unfreezing layers ('none', 'all', 'after_target', 'from_layer', 'selective')
+            unfreeze_from_layer: Layer to start unfreezing from (for 'from_layer' strategy)
+            unfreeze_components: Components to unfreeze (for 'selective' strategy)
+            freeze_base_model: Legacy parameter for backward compatibility
 
         Returns:
-            Dictionary of training metrics
+            Dictionary of training metrics and monitoring results
         """
         if self.train_loader is None:
             raise ValueError("Data loaders not initialized. Call prepare_data() first.")
 
-        # Freeze base model if requested
-        if freeze_base_model:
-            logger.info("Freezing base transformer model")
-            for param in self.predictor.base_model.parameters():
-                param.requires_grad = False
+        # Initialize monitoring if requested
+        if track_gradients:
+            self.gradient_tracker = GradientTracker(
+                self.predictor, 
+                track_interval=gradient_track_interval
+            )
+            logger.info("Gradient tracking enabled")
+        
+        if track_activations:
+            self.activation_monitor = ActivationMonitor(
+                self.predictor,
+                self.dataset,
+                batch_size=self.train_loader.batch_size,
+                device=self.device,
+                monitor_interval=activation_monitor_interval
+            )
+            logger.info("Activation monitoring enabled")
+            
+            # Collect initial activations
+            self.activation_monitor.collect_activations(epoch=0)
+            logger.info("Initial activation distribution collected")
+
+        # Apply unfreezing strategy
+        if UNFREEZING_AVAILABLE:
+            # If old 'freeze_base_model' is True, use 'none' strategy (everything frozen)
+            if freeze_base_model and unfreeze_strategy == "none":
+                # Keep the old behavior
+                freeze_entire_model(self.predictor.base_model)
+                logger.info("Using legacy freeze_base_model=True (everything frozen)")
+            else:
+                # Use the new unfreezing system
+                unfreezing_results = apply_unfreezing_strategy(
+                    model=self.predictor.base_model,
+                    strategy=unfreeze_strategy,
+                    target_layer=self.predictor.target_layer,
+                    from_layer=unfreeze_from_layer,
+                    components=unfreeze_components
+                )
+                
+                # Add unfreezing results to metrics
+                self.metrics["unfreezing"] = unfreezing_results
+                
+                logger.info(f"Applied unfreezing strategy: {unfreeze_strategy}")
+                logger.info(f"Unfrozen parameters: {unfreezing_results['unfrozen_params']:,} "
+                           f"({unfreezing_results['unfrozen_percentage']:.2f}% of base model)")
+        else:
+            # Fallback to simple freezing if selective unfreezing is not available
+            if freeze_base_model:
+                for param in self.predictor.base_model.parameters():
+                    param.requires_grad = False
+                logger.info("Freezing base model parameters (selective unfreezing not available)")
+
+        # Always make the head trainable
+        for param in self.predictor.head.parameters():
+            param.requires_grad = True
 
         # Only optimize parameters that require gradients
         trainable_params = [p for p in self.predictor.parameters() if p.requires_grad]
@@ -289,6 +890,10 @@ class PredictorTrainer:
                 if grad_clip is not None:
                     torch.nn.utils.clip_grad_norm_(trainable_params, grad_clip)
 
+                # Track gradients if enabled
+                if track_gradients and self.gradient_tracker is not None:
+                    self.gradient_tracker.step()
+
                 # Optimizer step
                 optimizer.step()
 
@@ -309,6 +914,10 @@ class PredictorTrainer:
             # Compute training metrics
             train_metrics = self._compute_metrics_on_split("train")
             self.metrics["train_metrics"].append(train_metrics)
+            
+            # Track activations if enabled
+            if track_activations and self.activation_monitor is not None:
+                self.activation_monitor.collect_activations(epoch=epoch+1)
 
             # Validation phase
             if eval_during_training:
@@ -352,7 +961,7 @@ class PredictorTrainer:
             # Learning rate scheduler step
             if scheduler is not None:
                 if lr_scheduler == "plateau":
-                    scheduler.step(val_loss)
+                    scheduler.step(val_loss if eval_during_training else train_loss)
                 else:
                     scheduler.step()
 
@@ -361,6 +970,27 @@ class PredictorTrainer:
         training_time = end_time - start_time
         self.metrics["train_time"] = training_time
         logger.info(f"Training completed in {training_time:.1f} seconds")
+
+        # Cleanup gradient tracking if used
+        if track_gradients and self.gradient_tracker is not None:
+            self.gradient_tracker.remove_hooks()
+            
+            # Generate gradient visualizations
+            gradient_viz_dir = os.path.join(self.output_dir, "gradient_analysis")
+            os.makedirs(gradient_viz_dir, exist_ok=True)
+            
+            gradient_results = self.gradient_tracker.generate_gradient_plots(gradient_viz_dir)
+            self.metrics["gradient_analysis"] = gradient_results
+            logger.info(f"Gradient analysis saved to {gradient_viz_dir}")
+        
+        # Generate activation distribution visualizations if used
+        if track_activations and self.activation_monitor is not None:
+            activation_viz_dir = os.path.join(self.output_dir, "activation_analysis")
+            os.makedirs(activation_viz_dir, exist_ok=True)
+            
+            activation_results = self.activation_monitor.generate_activation_plots(activation_viz_dir)
+            self.metrics["activation_analysis"] = activation_results
+            logger.info(f"Activation analysis saved to {activation_viz_dir}")
 
         # Save final model
         self._save_model("final_model")
@@ -705,7 +1335,7 @@ class PredictorTrainer:
             
             # Get prediction
             with torch.no_grad():
-                if hasattr(self.predictor, "target_layer") and hasattr(self.predictor, "target_neuron"):
+                if hasattr(self.predictor, 'target_layer') and hasattr(self.predictor, 'target_neuron'):
                     outputs, activations = self.predictor(
                         input_ids, mask, return_activations=True
                     )
@@ -1035,6 +1665,11 @@ def test_trainer():
             lr_scheduler="none",
             early_stopping=False,
             log_interval=1,
+            # Test new monitoring capabilities
+            track_gradients=True,
+            track_activations=True,
+            # Test unfreezing
+            unfreeze_strategy="after_target",
         )
 
         print(f"Final training loss: {metrics['train_loss'][-1]:.4f}")
@@ -1052,4 +1687,3 @@ def test_trainer():
 
 if __name__ == "__main__":
     test_trainer()
-

@@ -1,0 +1,81 @@
+Neural Introspection Report
+=========================
+
+Target Neuron Information
+------------------------
+Model: gpt2
+Layer: 11
+Neuron: 6
+Layer Type: mlp_out
+Feature Layer: -1
+Head Type: regression
+
+Performance Metrics
+------------------
+Correlation: -0.113837
+MSE: 69231.787541
+Mean Error: 263.023425
+Error Std: 7.103911
+
+Sample Predictions (Test Set)
+----------------------------
+Sample 1:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 19.786707
+  Predicted: 279.931603
+  Error: 260.144896
+
+Sample 2:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 19.949406
+  Predicted: 279.892364
+  Error: 259.942958
+
+Sample 3:
+  Text: Scientists study complex patterns in data to discover insights. Thi...
+  Actual: 18.530357
+  Predicted: 293.369301
+  Error: 274.838944
+
+Sample 4:
+  Text: Climate change poses significant challenges for future generations....
+  Actual: 18.852158
+  Predicted: 291.072052
+  Error: 272.219894
+
+Sample 5:
+  Text: Philosophy examines fundamental questions about existence and knowl...
+  Actual: 17.514322
+  Predicted: 277.897803
+  Error: 260.383480
+
+Sample 6:
+  Text: Scientists study complex patterns in data to discover insights. The...
+  Actual: 18.806124
+  Predicted: 294.061265
+  Error: 275.255141
+
+Sample 7:
+  Text: The quick brown fox jumps over the lazy dog. This has important imp...
+  Actual: 19.255793
+  Predicted: 271.837861
+  Error: 252.582069
+
+Sample 8:
+  Text: Neural networks consist of layers of interconnected nodes. This has...
+  Actual: 19.160810
+  Predicted: 286.451026
+  Error: 267.290216
+
+Sample 9:
+  Text: Ocean currents distribute heat around the planet. Future developmen...
+  Actual: 19.341740
+  Predicted: 276.359403
+  Error: 257.017663
+
+Sample 10:
+  Text: Neural networks consist of layers of interconnected nodes. Experts ...
+  Actual: 18.901596
+  Predicted: 285.668706
+  Error: 266.767110
+

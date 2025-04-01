@@ -16,6 +16,6 @@
   "base_model_name": "gpt2",
   "d_model": 768,
   "bin_edges": null,
-  "activation_mean": 50.02249917348226,
-  "activation_std": 10.806895536279317
+  "activation_mean": 50.250663173675534,
+  "activation_std": 10.68155703564281
 }

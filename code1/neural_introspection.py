@@ -38,6 +38,12 @@ from dataset.generator import ActivationDatasetGenerator, ActivationDataset
 from architecture.architecture import ActivationPredictor
 from training.trainer import PredictorTrainer, load_activation_dataset_from_files
 
+# Import our modules
+from neuron_selection.scanner import NeuronScanner
+from dataset.generator import ActivationDatasetGenerator, ActivationDataset
+from architecture.architecture import ActivationPredictor
+from training.trainer import PredictorTrainer, load_activation_dataset_from_files
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -76,12 +82,14 @@ def parse_arguments():
     # Input data parameters
     parser.add_argument("--texts", type=str, default=None,
                         help="Path to file with sample texts (one per line)")
-    parser.add_argument("--num-samples", type=int, default=750,
+    parser.add_argument("--num-samples", type=int, default=200,
                         help="Number of texts to generate if --texts not provided")
     
     # Dataset parameters
     parser.add_argument("--output-dir", type=str, default="output",
                         help="Directory for output files")
+    parser.add_argument("--dataset-size", type=int, default=500,
+                        help="Number of samples in the dataset")
     parser.add_argument("--force-overwrite", action="store_true", default=False,
                         help="Force overwrite of existing output directory (no archiving)")
     
@@ -104,6 +112,30 @@ def parse_arguments():
                         help="Enable early stopping during training")
     parser.add_argument("--feature-layer", type=int, default=-1,
                         help="Layer to extract features from for prediction (-1 for last layer)")
+    
+    # Model unfreezing parameters
+    parser.add_argument("--unfreeze", type=str, default="none",
+                        choices=["none", "all", "after_target", "from_layer", "selective"],
+                        help="Strategy for unfreezing the base model: "
+                             "'none' - freeze entire model, "
+                             "'all' - unfreeze entire model, "
+                             "'after_target' - unfreeze layers after target neuron's layer, "
+                             "'from_layer' - unfreeze from specific layer (set with --unfreeze-from), "
+                             "'selective' - unfreeze specific components (with --unfreeze-components)")
+    parser.add_argument("--unfreeze-from", type=int, default=None,
+                        help="Unfreeze layers starting from this index (for 'from_layer' strategy)")
+    parser.add_argument("--unfreeze-components", type=str, default="",
+                        help="Comma-separated list of components to unfreeze: 'attention', 'mlp', 'embeddings', etc.")
+    
+    # Monitoring parameters
+    parser.add_argument("--track-gradients", action="store_true", default=False,
+                        help="Track gradient flow during training")
+    parser.add_argument("--track-activations", action="store_true", default=False,
+                        help="Track activation distributions before and after training")
+    parser.add_argument("--activation-interval", type=int, default=5,
+                        help="How often to monitor activations (in epochs)")
+    parser.add_argument("--gradient-interval", type=int, default=50,
+                        help="How often to track gradients (in steps)")
     
     # Hardware parameters
     parser.add_argument("--device", type=str, default=None,
@@ -293,6 +325,7 @@ def generate_dataset(
     neuron: int,
     layer_type: str = "mlp_out",
     token_pos: Union[int, str] = "last",
+    dataset_size: int = 500,
     use_regression: bool = True,
     num_bins: int = 10,
     output_dir: str = "output",
@@ -311,6 +344,7 @@ def generate_dataset(
         neuron: Neuron index
         layer_type: Type of layer to extract activations from
         token_pos: Token position to analyze
+        dataset_size: Number of samples in the dataset
         use_regression: Whether to create a regression dataset (vs. classification)
         num_bins: Number of bins for classification
         output_dir: Directory for output files
@@ -325,9 +359,16 @@ def generate_dataset(
     # Create dataset generator
     generator = ActivationDatasetGenerator(model, device=device)
     
+    # Use a subset of texts if there are more than needed
+    if len(texts) > dataset_size:
+        dataset_texts = np.random.choice(texts, dataset_size, replace=False).tolist()
+    else:
+        # Repeat texts if needed
+        dataset_texts = (texts * ((dataset_size // len(texts)) + 1))[:dataset_size]
+    
     # Generate dataset
     dataset, metadata = generator.generate_dataset(
-        texts=texts,
+        texts=dataset_texts,
         layer=layer,
         neuron_idx=neuron,
         layer_type=layer_type,
@@ -402,6 +443,13 @@ def train_model(
     val_split: float = 0.15,
     test_split: float = 0.15,
     early_stopping: bool = True,
+    unfreeze_strategy: str = "none",
+    unfreeze_from: Optional[int] = None,
+    unfreeze_components: Optional[str] = None,
+    track_gradients: bool = False,
+    track_activations: bool = False,
+    activation_interval: int = 5,
+    gradient_interval: int = 50,
     output_dir: str = "output",
     device: str = "cpu",
 ) -> Tuple[ActivationPredictor, PredictorTrainer]:
@@ -503,7 +551,7 @@ def train_model(
         batch_size=batch_size,
     )
     
-    # Train model with more detailed configuration
+    # Train model with enhanced monitoring and unfreezing
     metrics = trainer.train(
         epochs=epochs,
         learning_rate=learning_rate,
@@ -513,7 +561,15 @@ def train_model(
         early_stopping=early_stopping,
         patience=5 if early_stopping else 0,
         grad_clip=1.0,  # Gradient clipping
-        freeze_base_model=True,  # Only train the prediction head
+        # Unfreezing strategy
+        unfreeze_strategy=unfreeze_strategy,
+        unfreeze_from_layer=unfreeze_from,
+        unfreeze_components=unfreeze_components,
+        # Monitoring features
+        track_gradients=track_gradients,
+        track_activations=track_activations,
+        activation_monitor_interval=activation_interval,
+        gradient_track_interval=gradient_interval,
     )
     
     logger.info(f"Training completed in {metrics['train_time']:.1f} seconds")
@@ -889,6 +945,7 @@ def main():
         neuron=neuron,
         layer_type=args.layer_type,
         token_pos=args.token_pos,
+        dataset_size=args.dataset_size,
         use_regression=args.regression,
         num_bins=args.num_bins,
         output_dir=args.output_dir,
@@ -912,6 +969,13 @@ def main():
         val_split=args.val_split,
         test_split=args.test_split,
         early_stopping=args.early_stopping,
+        unfreeze_strategy=args.unfreeze,
+        unfreeze_from=args.unfreeze_from,
+        unfreeze_components=args.unfreeze_components,
+        track_gradients=args.track_gradients,
+        track_activations=args.track_activations,
+        activation_interval=args.activation_interval,
+        gradient_interval=args.gradient_interval,
         output_dir=args.output_dir,
         device=device,
     )
@@ -938,7 +1002,7 @@ def main():
             "token_position": args.token_pos,
         },
         "dataset": {
-            "size": args.num_samples,
+            "size": args.dataset_size,
             "csv_path": dataset_csv,
             "metadata_path": dataset_metadata,
         },
@@ -949,6 +1013,11 @@ def main():
             "epochs": args.epochs,
             "learning_rate": args.learning_rate,
             "early_stopping": args.early_stopping,
+            "unfreeze_strategy": args.unfreeze,
+            "unfreeze_from": args.unfreeze_from,
+            "unfreeze_components": args.unfreeze_components,
+            "track_gradients": args.track_gradients,
+            "track_activations": args.track_activations,
         },
         "results": {
             "correlation": results["correlation"],
@@ -957,6 +1026,17 @@ def main():
             "figure_path": results["figure_path"],
         }
     }
+    
+    # Add monitoring results if available
+    if hasattr(trainer, 'metrics') and 'gradient_analysis' in trainer.metrics:
+        summary["monitoring"] = {
+            "gradient_analysis": trainer.metrics["gradient_analysis"],
+        }
+    
+    if hasattr(trainer, 'metrics') and 'activation_analysis' in trainer.metrics:
+        if "monitoring" not in summary:
+            summary["monitoring"] = {}
+        summary["monitoring"]["activation_analysis"] = trainer.metrics["activation_analysis"]
     
     # Save summary as JSON
     with open(summary_path, "w") as f:
@@ -972,6 +1052,15 @@ def main():
     print("="*60)
     print(f"Model: {args.model}")
     print(f"Target: Layer {layer}, Neuron {neuron}")
+    print(f"Unfreezing strategy: {args.unfreeze}")
+    
+    # Print monitoring information if enabled
+    if args.track_gradients:
+        print(f"Gradient analysis: {os.path.join(args.output_dir, 'gradient_analysis')}")
+    if args.track_activations:
+        print(f"Activation analysis: {os.path.join(args.output_dir, 'activation_analysis')}")
+    
+    # Always print results
     print(f"Results:")
     print(f"  Correlation: {results['correlation']:.4f}")
     print(f"  MSE: {results['mse']:.4f}")

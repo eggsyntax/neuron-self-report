@@ -1,0 +1,81 @@
+Neural Introspection Report
+=========================
+
+Target Neuron Information
+------------------------
+Model: gpt2
+Layer: 11
+Neuron: 6
+Layer Type: mlp_out
+Feature Layer: -1
+Head Type: regression
+
+Performance Metrics
+------------------
+Correlation: -0.098278
+MSE: 6.297768
+Mean Error: 2.359365
+Error Std: 0.855082
+
+Sample Predictions (Test Set)
+----------------------------
+Sample 1:
+  Text: Philosophy examines fundamental questions about existence and knowl...
+  Actual: 17.543234
+  Predicted: 20.894794
+  Error: 3.351561
+
+Sample 2:
+  Text: Deep learning has transformed computer vision tasks. This concept h...
+  Actual: 18.514112
+  Predicted: 21.378246
+  Error: 2.864134
+
+Sample 3:
+  Text: In machine learning, models are trained on data to make predictions...
+  Actual: 18.240849
+  Predicted: 20.684006
+  Error: 2.443157
+
+Sample 4:
+  Text: Transformers use attention mechanisms to process sequences. The und...
+  Actual: 17.909904
+  Predicted: 21.454546
+  Error: 3.544641
+
+Sample 5:
+  Text: Deep learning has transformed computer vision tasks. Future develop...
+  Actual: 18.679880
+  Predicted: 21.355951
+  Error: 2.676071
+
+Sample 6:
+  Text: Deep learning has transformed computer vision tasks. This idea cont...
+  Actual: 18.905371
+  Predicted: 21.451935
+  Error: 2.546564
+
+Sample 7:
+  Text: Ocean currents distribute heat around the planet. Continued progres...
+  Actual: 19.344065
+  Predicted: 20.789549
+  Error: 1.445484
+
+Sample 8:
+  Text: Mathematics provides tools for modeling physical phenomena. This co...
+  Actual: 18.316269
+  Predicted: 21.025978
+  Error: 2.709709
+
+Sample 9:
+  Text: The quick brown fox jumps over the lazy dog. Research in this area ...
+  Actual: 19.203777
+  Predicted: 20.463037
+  Error: 1.259260
+
+Sample 10:
+  Text: Language models can generate coherent text passages. The implicatio...
+  Actual: 18.720623
+  Predicted: 21.232544
+  Error: 2.511921
+

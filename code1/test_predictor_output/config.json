@@ -1,0 +1,29 @@
+{
+  "head_type": "classification",
+  "target_layer": 6,
+  "target_neuron": 500,
+  "layer_type": "mlp_out",
+  "token_pos": "last",
+  "feature_layer": -1,
+  "head_config": {
+    "class_name": "ClassificationHead",
+    "input_dim": 768,
+    "dropout": 0.1,
+    "num_classes": 5,
+    "hidden_dim": 32,
+    "activation": "gelu",
+    "class_weights": null
+  },
+  "base_model_name": "gpt2",
+  "d_model": 768,
+  "bin_edges": [
+    -10.0,
+    -6.0,
+    -2.0,
+    2.0,
+    6.0,
+    10.0
+  ],
+  "activation_mean": null,
+  "activation_std": null
+}

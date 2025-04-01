@@ -1,0 +1,11 @@
+text,activation,bin
+The cat sat on the mat.,-0.9329440593719482,0
+Machine learning models can be difficult to interpret.,-0.09762916713953018,1
+Transformers use attention mechanisms to process sequences.,0.15057305991649628,2
+Neural networks have revolutionized artificial intelligence.,0.9299805760383606,3
+The quick brown fox jumps over the lazy dog.,-0.13148187100887299,1
+Gradient descent is an optimization algorithm.,0.06637343019247055,2
+The earth revolves around the sun.,1.4448750019073486,5
+The sky is blue because of Rayleigh scattering.,0.8359825611114502,3
+Water boils at 100 degrees Celsius at sea level.,0.9589844346046448,3
+Photosynthesis is how plants convert sunlight into energy.,0.0004330473020672798,1

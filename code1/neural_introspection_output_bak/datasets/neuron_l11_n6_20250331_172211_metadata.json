@@ -1,0 +1,27 @@
+{
+  "layer": 11,
+  "neuron_idx": 6,
+  "layer_type": "mlp_out",
+  "token_pos": "last (511)",
+  "output_tokens": false,
+  "num_bins": null,
+  "num_samples": 150,
+  "balanced": false,
+  "target_samples_per_bin": null,
+  "activation_stats": {
+    "min": 17.222822189331055,
+    "max": 74.07270812988281,
+    "mean": 50.02249917348226,
+    "std": 10.806895536279317,
+    "quartiles": [
+      42.25828170776367,
+      51.28682899475098,
+      57.2555570602417
+    ]
+  },
+  "dataset_info": {
+    "max_length": 512,
+    "output_tokens": false,
+    "num_bins": 10
+  }
+}

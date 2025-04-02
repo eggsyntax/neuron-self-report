@@ -427,7 +427,7 @@ class ActivationPredictor(nn.Module):
         return_activations: bool = False,
         return_uncertainties: bool = False,
         return_raw: bool = False,
-    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """
         Generate predictions for a list of texts.
         
@@ -533,15 +533,16 @@ class ActivationPredictor(nn.Module):
                 predictions = predictions * self.activation_std + self.activation_mean
         
         # Prepare return values
-        results = [predictions]
         if return_activations and all_activations:
             activations = np.concatenate(all_activations, axis=0)
-            results.append(activations)
-        if return_uncertainties and all_uncertainties:
+            if return_uncertainties and all_uncertainties:
+                uncertainties = np.concatenate(all_uncertainties, axis=0)
+                return predictions, activations, uncertainties
+            return predictions, activations
+        elif return_uncertainties and all_uncertainties:
             uncertainties = np.concatenate(all_uncertainties, axis=0)
-            results.append(uncertainties)
-        
-        return results[0] if len(results) == 1 else tuple(results)
+            return predictions, uncertainties
+        return predictions
     
     def report(
         self,

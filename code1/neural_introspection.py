@@ -513,13 +513,19 @@ def train_model(
     head_type = "regression" if use_regression else "classification"
     num_classes = dataset.num_bins if not use_regression else None
     
-    # Configure the prediction head with a hidden layer
+    # Prediction head with a hidden layer
+    # head_config = {
+    #     "hidden_dim": 64,
+    #     "dropout": 0.1,
+    #     "activation": "gelu"
+    # }
+
     head_config = {
-        "hidden_dim": 64,
-        "dropout": 0.1,
-        "activation": "gelu"
+        "hidden_dim": None,  # No hidden layer
+        "dropout": 0,        # No dropout
     }
-    
+
+
     predictor = ActivationPredictor(
         base_model=model,
         head_type=head_type,
@@ -747,19 +753,49 @@ def evaluate_model(
         else:
             test_sample = texts[:5]
         
-        # Get predictions and actual values
-        predictions, activations = predictor.predict(
+        # Get both raw and processed predictions for comparison
+        # First get denormalized predictions (as they would appear in reports)
+        predictions_denorm, activations = predictor.predict(
             test_sample,
             return_activations=True,
+            return_raw=False,  # Get denormalized predictions
         )
         
+        # Then get raw predictions (before denormalization)
+        predictions_raw = predictor.predict(
+            test_sample,
+            return_activations=False,
+            return_raw=True,  # Get raw predictions
+        )
+        
+        # Check if we should apply the same bias correction as in the visualization
+        has_bias_correction = test_results.get("has_systematic_bias", False)
+        mean_error = test_results.get("mean_error", 0) if has_bias_correction else 0
+        
         # Display results
-        for i, (text, pred, actual) in enumerate(zip(test_sample, predictions, activations)):
+        for i, (text, raw_pred, denorm_pred, actual) in enumerate(zip(test_sample, predictions_raw, predictions_denorm, activations)):
             logger.info(f"Example {i+1}:")
             # Truncate long texts for display
             display_text = text if len(text) <= 70 else text[:67] + "..."
-            logger.info(f"  Text: {display_text}")
-            logger.info(f"  Predicted: {pred:.6f}, Actual: {actual:.6f}, Error: {abs(pred-actual):.6f}")
+            
+            # Apply the bias correction to match our visualization
+            if has_bias_correction:
+                # Correct the prediction using the same method as in visualization
+                corrected_pred = denorm_pred - mean_error
+                logger.info(f"  Text: {display_text}")
+                logger.info(f"  Raw model output: {raw_pred:.6f}")
+                logger.info(f"  Denormalized: {denorm_pred:.6f}")
+                logger.info(f"  Corrected: {corrected_pred:.6f}")
+                logger.info(f"  Actual: {actual:.6f}")
+                logger.info(f"  Original error: {denorm_pred-actual:.6f}")
+                logger.info(f"  Corrected error: {corrected_pred-actual:.6f}")
+            else:
+                # Original behavior
+                logger.info(f"  Text: {display_text}")
+                logger.info(f"  Raw model output: {raw_pred:.6f}")
+                logger.info(f"  Denormalized: {denorm_pred:.6f}")
+                logger.info(f"  Actual: {actual:.6f}")
+                logger.info(f"  Error: {denorm_pred-actual:.6f}")
     
     # Generate a detailed report
     report_path = os.path.join(output_dir, f"introspection_report_{timestamp}.txt")

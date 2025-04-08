@@ -43,6 +43,46 @@ class ActivationHead(nn.Module):
             "dropout": self.dropout.p,
         }
 
+class TokenPredictionHead(ActivationHead):
+    """Head that uses the model's token logits for activation prediction"""
+    
+    def __init__(
+        self,
+        input_dim: int,
+        digit_tokens: List[int],
+        dropout: float = 0.1,
+    ):
+        """
+        Initialize token prediction head.
+        
+        Args:
+            input_dim: Dimension of input features (not directly used for token prediction)
+            digit_tokens: List of token IDs for the digits 0-9 to use for prediction
+            dropout: Dropout probability (not directly used for token prediction)
+        """
+        super().__init__(input_dim, dropout)
+        
+        self.digit_tokens = digit_tokens
+        self.has_hidden = False  # No hidden layer needed since we use model's logits
+        
+    def forward(self, x):
+        """
+        Forward pass is a no-op for token prediction head.
+        The actual prediction happens in ActivationPredictor.forward() for this head type.
+        """
+        # Token prediction head doesn't transform the features
+        # It's handled specially in the ActivationPredictor's forward method
+        return x
+    
+    def get_config(self) -> Dict:
+        """Return configuration for serialization"""
+        config = super().get_config()
+        config.update({
+            "digit_tokens": self.digit_tokens,
+        })
+        return config
+
+
 class RegressionHead(ActivationHead):
     """Head for predicting continuous activation values"""
     
@@ -323,6 +363,22 @@ class ActivationPredictor(nn.Module):
                 input_dim=self.d_model,
                 **head_config_copy
             )
+        elif head_type == "token":
+            # For token-based prediction, we need to map tokens to digit values
+            
+            # Get token IDs for digits 0-9
+            digit_tokens = []
+            for i in range(10):
+                digit_token = self.tokenizer.encode(str(i))[-1]  # Get the token ID for each digit
+                digit_tokens.append(digit_token)
+                
+            logger.info(f"Token prediction head will use digit tokens: {digit_tokens}")
+            
+            self.head = TokenPredictionHead(
+                input_dim=self.d_model,
+                digit_tokens=digit_tokens,
+                **head_config_copy
+            )
         else:
             raise ValueError(f"Unsupported head type: {head_type}")
         
@@ -367,25 +423,63 @@ class ActivationPredictor(nn.Module):
         
         # Run model with caching for activation extraction
         with torch.set_grad_enabled(self.training):
-            _, cache = self.base_model.run_with_cache(
-                input_ids,
-                attention_mask=attention_mask,
-                return_type=None,
-            )
-            
-            # Extract features from residual stream at the desired position
-            features = []
-            for i in range(batch_size):
-                pos = token_positions[i].item()
-                # Use the residual stream at the specified feature layer for prediction
-                feature = cache["resid_post", self.feature_layer][i, pos]
-                features.append(feature)
-            
-            # Stack features for batch processing
-            features = torch.stack(features, dim=0)
-            
-            # Run through prediction head
-            predictions = self.head(features)
+            # Special handling for token prediction head
+            if self.head_type == "token":
+                # For token prediction, get model's raw logits
+                outputs = self.base_model(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    return_type="logits"  # Get raw logits
+                )
+                
+                # Extract logits at desired token position
+                logits_at_pos = []
+                for i in range(batch_size):
+                    pos = token_positions[i].item()
+                    # Get logits at specific position
+                    pos_logits = outputs[i, pos]
+                    logits_at_pos.append(pos_logits)
+                
+                # Stack logits for batch processing
+                logits_at_pos = torch.stack(logits_at_pos, dim=0)
+                
+                # Extract only logits for the digits tokens (0-9)
+                if hasattr(self.head, "digit_tokens"):
+                    digit_tokens = self.head.digit_tokens
+                    # Get just the logits for digit tokens
+                    digit_logits = torch.stack([logits_at_pos[:, token_idx] for token_idx in digit_tokens], dim=1)
+                    predictions = digit_logits
+                else:
+                    # Fallback if we don't have digit tokens
+                    predictions = logits_at_pos
+                
+                # Run the rest of the activation extraction code for other needed variables
+                _, cache = self.base_model.run_with_cache(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    return_type=None,
+                )
+            else:
+                # Standard path for classification and regression
+                _, cache = self.base_model.run_with_cache(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    return_type=None,
+                )
+                
+                # Extract features from residual stream at the desired position
+                features = []
+                for i in range(batch_size):
+                    pos = token_positions[i].item()
+                    # Use the residual stream at the specified feature layer for prediction
+                    feature = cache["resid_post", self.feature_layer][i, pos]
+                    features.append(feature)
+                
+                # Stack features for batch processing
+                features = torch.stack(features, dim=0)
+                
+                # Run through prediction head
+                predictions = self.head(features)
             
             # Extract actual activations if requested
             if (return_activations or return_uncertainties) and self.target_layer is not None and self.target_neuron is not None:
@@ -402,8 +496,8 @@ class ActivationPredictor(nn.Module):
                 
                 # Calculate uncertainties if requested
                 if return_uncertainties:
-                    if self.head_type == "classification":
-                        # For classification, get softmax probabilities
+                    if self.head_type == "classification" or self.head_type == "token":
+                        # For classification and token prediction, get softmax probabilities
                         probs = F.softmax(predictions, dim=1)
                         max_probs, _ = torch.max(probs, dim=1)
                         # Higher max probability means lower uncertainty
@@ -487,7 +581,28 @@ class ActivationPredictor(nn.Module):
         
         # Process predictions based on head type
         if not return_raw:
-            if self.head_type == "classification" and self.bin_edges is not None:
+            if self.head_type == "token":
+                # For token prediction, convert logits to probabilities
+                tensor_preds = torch.tensor(predictions)
+                probs = F.softmax(tensor_preds, dim=1).numpy()
+                
+                # Map digit tokens (0-9) directly to their values
+                digit_values = np.arange(10)  # Values 0-9
+                continuous_preds = np.sum(probs * digit_values.reshape(1, -1), axis=1)
+                
+                # Scale to match activation distribution if normalization parameters available
+                if self.activation_mean is not None and self.activation_std is not None:
+                    # First normalize to 0-1 range (assuming 0-9 values)
+                    normalized_preds = continuous_preds / 9.0  
+                    # Then transform to match typical activation distribution
+                    # This assumes activations follow roughly a normal distribution
+                    z_min, z_max = -2, 2  # Rough range to cover ~95% of normal distribution
+                    scaled_preds = normalized_preds * (z_max - z_min) + z_min
+                    # Scale by std and shift by mean to match activation distribution
+                    continuous_preds = scaled_preds * self.activation_std + self.activation_mean
+                
+                predictions = continuous_preds
+            elif self.head_type == "classification" and self.bin_edges is not None:
                 # For classification, convert logits to class probabilities using PyTorch
                 tensor_preds = torch.tensor(predictions)
                 probs = F.softmax(tensor_preds, dim=1).numpy()
@@ -564,7 +679,7 @@ class ActivationPredictor(nn.Module):
         Returns:
             Dictionary with predictions, confidences, and indicators
         """
-        if self.head_type == "classification":
+        if self.head_type == "classification" or self.head_type == "token":
             preds, activations, uncertainties = self.predict(
                 texts, 
                 batch_size=batch_size,
@@ -577,8 +692,21 @@ class ActivationPredictor(nn.Module):
             confidence_scores = 1.0 - uncertainties
             
             # Get continuous predictions for easier interpretation
-            if self.bin_edges is not None:
-                # Convert to PyTorch tensor for softmax operation
+            if self.head_type == "token":
+                # For token prediction, map directly to digit values
+                tensor_preds = torch.tensor(preds)
+                probs = F.softmax(tensor_preds, dim=1).numpy()
+                digit_values = np.arange(10)  # Values 0-9
+                continuous_preds = np.sum(probs * digit_values.reshape(1, -1), axis=1)
+                
+                # Scale to match activation distribution if needed
+                if self.activation_mean is not None and self.activation_std is not None:
+                    normalized_preds = continuous_preds / 9.0
+                    z_min, z_max = -2, 2
+                    scaled_preds = normalized_preds * (z_max - z_min) + z_min
+                    continuous_preds = scaled_preds * self.activation_std + self.activation_mean
+            elif self.bin_edges is not None:
+                # Convert to PyTorch tensor for softmax operation 
                 tensor_preds = torch.tensor(preds)
                 probs = F.softmax(tensor_preds, dim=1).numpy()
                 bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2

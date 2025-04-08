@@ -87,12 +87,13 @@ python neural_introspection.py --model gpt2-small --num-samples 1000 --output-di
   - By default, existing output is archived with a timestamp
 
 #### Training Parameters
-- `--regression` (pass 'true' or 'false', default: `True`): Use regression head
-  - `True`: Predict continuous activation values
-  - `False`: Use classification with binned activation values
+- `--head-type` (default: `regression`): Type of prediction head
+  - `regression`: Predict continuous activation values (standard approach)
+  - `classification`: Use classification with binned activation values
+  - `token`: Train the model to output digit tokens (0-9) representing activation strength
   
 - `--num-bins` (default: `10`): Number of bins for classification
-  - Only used when `--regression` is set to `False`
+  - Only used when `--head-type` is set to `classification`
   - More bins provide finer granularity but require more data
   
 - `--batch-size` (default: `16`): Batch size for training
@@ -120,10 +121,11 @@ python neural_introspection.py --model gpt2-small --num-samples 1000 --output-di
 #### Unfreezing Parameters
 - `--unfreeze` (default: `none`): Unfreezing strategy
   - `none`: Freeze entire model (only train prediction head)
-  - `all`: Unfreeze entire model (test regularization hypothesis)
+  - `all`: Unfreeze entire model while keeping head frozen (forces model to adapt)
   - `after_target`: Unfreeze layers after target neuron's layer
   - `from_layer`: Unfreeze from specific layer onwards
   - `selective`: Unfreeze specific component types
+  - Note: When any unfreezing strategy other than `none` is used, prediction heads remain frozen
   
 - `--unfreeze-from` (default: `None`): Layer to start unfreezing from
   - Only used with `--unfreeze from_layer`
@@ -145,7 +147,11 @@ python neural_introspection.py --model gpt2-small --num-samples 1000 --output-di
 - `--gradient-interval` (default: `50`): Gradient tracking frequency
   - How often to record gradient statistics (in steps)
 
-##### Details on monitoring:
+#### Hardware Parameters
+- `--device` (default: `None`): Device to use
+  - Auto-detects MPS (Apple Silicon), CUDA, or CPU if not specified
+
+#### Details on monitoring:
 
 **Activation Distribution Monitoring** tracks how a target neuron's behavior changes throughout the training process, providing direct evidence of whether the model is modifying its internal representations. The system captures activation values before training begins and at regular intervals during training, generating visualizations that compare the initial and final distributions alongside statistical measures of the changes (like KL divergence and distribution shifts). This feature is particularly valuable for testing hypotheses about neural self-modification, regularization effects, and understanding how fine-tuning alters specific neurons' behavior patterns.
 
@@ -155,18 +161,14 @@ When examining the activation distribution visualizations, pay attention to chan
 
 When interpreting the gradient visualization plots, focus on the relative differences between layers rather than absolute values. Layers with consistently higher gradient magnitudes are learning more actively, while declining gradients over time may indicate approaching convergence. The gradient norm by layer chart shows overall gradient health, while the layer-wise gradient plots reveal if certain components (like attention mechanisms or specific layers) are dominating the learning process. Sharp spikes or unusual patterns often indicate potential issues that may require adjustment to hyperparameters or architecture.
 
-#### Hardware Parameters
-- `--device` (default: `None`): Device to use
-  - Auto-detects MPS (Apple Silicon), CUDA, or CPU if not specified
-
 ### Cookbook
 
 #### 1. Basic Linear Probe (Default)
 
-The default configuration trains a simple head while freezing the entire model:
+The default configuration trains a simple regression head while freezing the entire model:
 
 ```bash
-python neural_introspection.py --model gpt2-small
+python neural_introspection.py --model gpt2-small --head-type regression
 ```
 
 This is equivalent to a linear probe setup and answers: "Can the model's existing representations predict specific neuron activations?"
@@ -217,7 +219,17 @@ For maximum insight, enable all monitoring features:
 python neural_introspection.py --model gpt2-small --unfreeze after_target --track-gradients --track-activations --num-samples 500
 ```
 
-#### 7. Optimizing for Performance
+#### 7. Using Token Prediction
+
+To train the model to output digit tokens representing activation strength:
+
+```bash
+python neural_introspection.py --model gpt2-small --head-type token --unfreeze all
+```
+
+This approach requires model unfreezing and trains the model to use its standard token prediction path.
+
+#### 8. Optimizing for Performance
 
 For best prediction performance:
 
@@ -252,7 +264,10 @@ The project is organized into four main modules:
    - CSV-based persistence to avoid PyTorch unpickling issues
 
 3. **ActivationPredictor** (`architecture/architecture.py`)
-   - Architecture for predicting activations (classification or regression)
+   - Architecture for predicting activations with three head types:
+     - Regression: Continuous value prediction
+     - Classification: Binned activation prediction
+     - Token: Uses model's token prediction path for digit output (0-9)
    - Uses the model's own representations to predict specific neuron values
    - Implements both training and inference workflows
 
@@ -260,6 +275,7 @@ The project is organized into four main modules:
    - Training module with validation and visualization
    - Implements gradient and activation monitoring
    - Controls model unfreezing strategies
+   - Keeps prediction heads frozen when unfreezing parts of the model
 
 5. **Neural Introspection Pipeline** (`neural_introspection.py`)
    - End-to-end pipeline integrating all components
@@ -353,6 +369,8 @@ Potential areas for enhancement:
 4. **Ensembling approaches**: Multi-head predictions
 5. **Meta-learning approaches**: Quick adaptation to new neurons
 6. **Activation distillation**: Knowledge distillation for activations
+7. **Advanced token prediction**: Extending token prediction beyond digit tokens
+8. **Comparative analysis**: Systematically comparing head types across different neurons
 
 ## License
 

@@ -82,7 +82,7 @@ def parse_arguments():
     # Input data parameters
     parser.add_argument("--texts", type=str, default=None,
                         help="Path to file with sample texts (one per line)")
-    parser.add_argument("--num-samples", type=int, default=200,
+    parser.add_argument("--num-samples", type=int, default=500,
                         help="Number of texts to generate if --texts not provided")
     
     # Dataset parameters
@@ -94,10 +94,10 @@ def parse_arguments():
                         help="Force overwrite of existing output directory (no archiving)")
     
     # Training parameters
-    parser.add_argument("--regression", type=lambda x: x.lower() == 'true', default=True,
-                        help="Use regression head instead of classification")
+    parser.add_argument("--head-type", type=str, default="regression", choices=["regression", "classification", "token"],
+                        help="Type of prediction head to use (regression, classification, or token)")
     parser.add_argument("--num-bins", type=int, default=10,
-                        help="Number of bins for classification (ignored for regression)")
+                        help="Number of bins for classification (ignored for regression and token)")
     parser.add_argument("--batch-size", type=int, default=16,
                         help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=20,
@@ -326,7 +326,7 @@ def generate_dataset(
     layer_type: str = "mlp_out",
     token_pos: Union[int, str] = "last",
     dataset_size: int = 500,
-    use_regression: bool = True,
+    head_type: str = "regression",
     num_bins: int = 10,
     output_dir: str = "output",
     device: str = "cpu",
@@ -345,7 +345,7 @@ def generate_dataset(
         layer_type: Type of layer to extract activations from
         token_pos: Token position to analyze
         dataset_size: Number of samples in the dataset
-        use_regression: Whether to create a regression dataset (vs. classification)
+        head_type: Type of head to use ("regression", "classification", or "token")
         num_bins: Number of bins for classification
         output_dir: Directory for output files
         device: Device to run on
@@ -353,8 +353,7 @@ def generate_dataset(
     Returns:
         Tuple of (dataset_csv_path, dataset_metadata_path)
     """
-    logger.info(f"Generating {'regression' if use_regression else 'classification'} dataset "
-                f"for Layer {layer}, Neuron {neuron}")
+    logger.info(f"Generating {head_type} dataset for Layer {layer}, Neuron {neuron}")
     
     # Create dataset generator
     generator = ActivationDatasetGenerator(model, device=device)
@@ -366,6 +365,10 @@ def generate_dataset(
         # Repeat texts if needed
         dataset_texts = (texts * ((dataset_size // len(texts)) + 1))[:dataset_size]
     
+    # For dataset generation, we care if we need discretized outputs (for classification)
+    # Token head uses continuous values like regression, but token-based prediction
+    use_discretized_output = head_type == "classification"
+    
     # Generate dataset
     dataset, metadata = generator.generate_dataset(
         texts=dataset_texts,
@@ -373,9 +376,9 @@ def generate_dataset(
         neuron_idx=neuron,
         layer_type=layer_type,
         token_pos=token_pos,
-        output_tokens=not use_regression,  # False for regression, True for classification
+        output_tokens=use_discretized_output,  # Only classification needs discretized outputs
         num_bins=num_bins,
-        balance_bins=not use_regression,  # Balance bins for classification
+        balance_bins=use_discretized_output,  # Balance bins for classification
     )
     
     # Create output directory structure
@@ -436,7 +439,7 @@ def train_model(
     layer_type: str = "mlp_out",
     token_pos: Union[int, str] = "last",
     feature_layer: int = -1,
-    use_regression: bool = True,
+    head_type: str = "regression",
     batch_size: int = 16,
     epochs: int = 20,
     learning_rate: float = 1e-4,
@@ -469,7 +472,7 @@ def train_model(
         layer_type: Type of layer to extract activations from
         token_pos: Token position to analyze
         feature_layer: Layer to extract features from for prediction
-        use_regression: Whether to use regression head
+        head_type: Type of prediction head to use ("regression", "classification", or "token")
         batch_size: Batch size for training
         epochs: Number of training epochs
         learning_rate: Learning rate
@@ -483,7 +486,7 @@ def train_model(
         Tuple of (predictor, trainer)
     """
     logger.info(f"Training {model.cfg.model_name} to predict Layer {layer}, Neuron {neuron} activations")
-    logger.info(f"  Using {'regression' if use_regression else 'classification'} head")
+    logger.info(f"  Using {head_type} head")
     logger.info(f"  Features from layer: {feature_layer}")
     
     # Load dataset
@@ -510,8 +513,8 @@ def train_model(
     os.makedirs(model_dir, exist_ok=True)
     
     # Create predictor model
-    head_type = "regression" if use_regression else "classification"
-    num_classes = dataset.num_bins if not use_regression else None
+    # Determine number of classes for classification head
+    num_classes = dataset.num_bins if head_type == "classification" else None
     
     # Prediction head with a hidden layer
     # head_config = {
@@ -1024,7 +1027,7 @@ def main():
         layer_type=args.layer_type,
         token_pos=args.token_pos,
         dataset_size=args.dataset_size,
-        use_regression=args.regression,
+        head_type=args.head_type,
         num_bins=args.num_bins,
         output_dir=args.output_dir,
         device=device,
@@ -1040,7 +1043,7 @@ def main():
         layer_type=args.layer_type,
         token_pos=args.token_pos,
         feature_layer=args.feature_layer,
-        use_regression=args.regression,
+        head_type=args.head_type,
         batch_size=args.batch_size,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
@@ -1085,7 +1088,7 @@ def main():
             "metadata_path": dataset_metadata,
         },
         "training": {
-            "head_type": "regression" if args.regression else "classification",
+            "head_type": args.head_type,
             "feature_layer": args.feature_layer,
             "batch_size": args.batch_size,
             "epochs": args.epochs,

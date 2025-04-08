@@ -824,9 +824,16 @@ class PredictorTrainer:
                     param.requires_grad = False
                 logger.info("Freezing base model parameters (selective unfreezing not available)")
 
-        # Always make the head trainable
-        for param in self.predictor.head.parameters():
-            param.requires_grad = True
+        # Make the head trainable only if we're not unfreezing the model
+        # When unfreezing, we want to keep the head frozen to force the model to adapt
+        if unfreeze_strategy == "none":
+            for param in self.predictor.head.parameters():
+                param.requires_grad = True
+        else:
+            # Freeze the head when unfreezing parts of the model
+            for param in self.predictor.head.parameters():
+                param.requires_grad = False
+            logger.info("Prediction head frozen since model unfreezing strategy is enabled")
 
         # Only optimize parameters that require gradients
         trainable_params = [p for p in self.predictor.parameters() if p.requires_grad]

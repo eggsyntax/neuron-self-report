@@ -87,7 +87,7 @@ python neural_introspection.py --model gpt2-small --num-samples 1000 --output-di
   - By default, existing output is archived with a timestamp
 
 #### Training Parameters
-- `--regression` (default: `True`): Use regression head
+- `--regression` (pass 'true' or 'false', default: `True`): Use regression head
   - `True`: Predict continuous activation values
   - `False`: Use classification with binned activation values
   
@@ -144,6 +144,16 @@ python neural_introspection.py --model gpt2-small --num-samples 1000 --output-di
   
 - `--gradient-interval` (default: `50`): Gradient tracking frequency
   - How often to record gradient statistics (in steps)
+
+##### Details on monitoring:
+
+**Activation Distribution Monitoring** tracks how a target neuron's behavior changes throughout the training process, providing direct evidence of whether the model is modifying its internal representations. The system captures activation values before training begins and at regular intervals during training, generating visualizations that compare the initial and final distributions alongside statistical measures of the changes (like KL divergence and distribution shifts). This feature is particularly valuable for testing hypotheses about neural self-modification, regularization effects, and understanding how fine-tuning alters specific neurons' behavior patterns.
+
+When examining the activation distribution visualizations, pay attention to changes in the distribution shape, mean, and variance. A narrowing distribution suggests the neuron is becoming more predictable or specialized, while shifts in the mean indicate the neuron is systematically changing its firing threshold. The comparison plot highlights before/after differences, while the evolution plot shows progressive changes across training epochs. The KL divergence metric quantifies the overall distributional shift - higher values indicate more dramatic changes to the neuron's behavior. These insights help determine whether training is merely adapting to the neuron's existing behavior or actively modifying how the neuron itself operates.
+
+**Gradient Flow Analysis** tracks how gradients propagate through different layers of the neural network during training, revealing which components are actively learning and how information flows backward through the model. By monitoring gradient statistics (mean magnitude, norm, and maximum values) at regular intervals, it generates visualizations showing gradient behavior across different layers over time. This helps identify issues like vanishing or exploding gradients and understand which parts of the network contribute most to learning.
+
+When interpreting the gradient visualization plots, focus on the relative differences between layers rather than absolute values. Layers with consistently higher gradient magnitudes are learning more actively, while declining gradients over time may indicate approaching convergence. The gradient norm by layer chart shows overall gradient health, while the layer-wise gradient plots reveal if certain components (like attention mechanisms or specific layers) are dominating the learning process. Sharp spikes or unusual patterns often indicate potential issues that may require adjustment to hyperparameters or architecture.
 
 #### Hardware Parameters
 - `--device` (default: `None`): Device to use

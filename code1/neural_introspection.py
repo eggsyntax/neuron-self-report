@@ -94,7 +94,7 @@ def parse_arguments():
                         help="Force overwrite of existing output directory (no archiving)")
     
     # Training parameters
-    parser.add_argument("--regression", action="store_true", default=True,
+    parser.add_argument("--regression", type=lambda x: x.lower() == 'true', default=True,
                         help="Use regression head instead of classification")
     parser.add_argument("--num-bins", type=int, default=10,
                         help="Number of bins for classification (ignored for regression)")
@@ -783,7 +783,7 @@ def evaluate_model(
                 # Correct the prediction using the same method as in visualization
                 corrected_pred = denorm_pred - mean_error
                 logger.info(f"  Text: {display_text}")
-                logger.info(f"  Raw model output: {raw_pred:.6f}")
+                logger.info(f"  Raw model output: {raw_pred}")
                 logger.info(f"  Denormalized: {denorm_pred:.6f}")
                 logger.info(f"  Corrected: {corrected_pred:.6f}")
                 logger.info(f"  Actual: {actual:.6f}")

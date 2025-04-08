@@ -310,7 +310,7 @@ class ActivationPredictor(nn.Module):
                 
             # For testing only - default to 5 if not specified
             if num_classes is None:
-                num_classes = 5
+                num_classes = 10
                 print(f"WARNING: Using default num_classes={num_classes} for classification head")
                 
             self.head = ClassificationHead(

@@ -161,6 +161,10 @@ class RegressionHead(ActivationHead):
             x = x * self.output_scale
             
         return x.squeeze(-1)  # Remove last dimension
+        
+        # NOTE: We're not doing any normalization here. The model should be
+        # trained to output values in the right scale. Any normalization
+        # should be done consistently at the dataset level only.
     
     def get_config(self) -> Dict:
         """Return configuration for serialization"""
@@ -597,24 +601,27 @@ class ActivationPredictor(nn.Module):
                 digit_values = np.arange(10)  # Values 0-9
                 continuous_preds = np.sum(probs * digit_values.reshape(1, -1), axis=1)
                 
-                # Scale to match activation distribution if normalization parameters available
+                # If we're using tokens to predict activations, we need a mapping approach
+                # This is a simple linear mapping from [0-9] range to the activation range
+                # NOTE: In general, the token approach is less precise than regression
                 if self.activation_mean is not None and self.activation_std is not None:
-                    # First normalize to 0-1 range (assuming 0-9 values)
-                    normalized_preds = continuous_preds / 9.0  
-                    # Then transform to match typical activation distribution
-                    # This assumes activations follow roughly a normal distribution
-                    z_min, z_max = -2, 2  # Rough range to cover ~95% of normal distribution
-                    scaled_preds = normalized_preds * (z_max - z_min) + z_min
-                    # Scale by std and shift by mean to match activation distribution
-                    continuous_preds = scaled_preds * self.activation_std + self.activation_mean
+                    # Map from [0-9] to activation range using the provided statistics
+                    min_act = self.activation_mean - 2 * self.activation_std  # approximate min
+                    max_act = self.activation_mean + 2 * self.activation_std  # approximate max
+                    act_range = max_act - min_act
+                    
+                    # Linear mapping: [0-9] -> [min_act, max_act]
+                    continuous_preds = min_act + (continuous_preds / 9.0) * act_range
+                    logger.info(f"Mapping token predictions from [0-9] to activation range [{min_act:.2f}, {max_act:.2f}]")
                 
                 predictions = continuous_preds
+                
             elif self.head_type == "classification" and self.bin_edges is not None:
                 # For classification, convert logits to class probabilities using PyTorch
                 tensor_preds = torch.tensor(predictions)
                 probs = F.softmax(tensor_preds, dim=1).numpy()
                 
-                # If we want continuous values, convert using bin centers
+                # Convert class probabilities to continuous values using bin centers
                 bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2
                 
                 # Handle mismatch between number of classes and bin centers
@@ -626,17 +633,13 @@ class ActivationPredictor(nn.Module):
                     continuous_preds = np.sum(probs * bin_centers.reshape(1, -1), axis=1)
                 elif num_classes < num_centers:
                     # If we have more bin centers than classes, use only the first num_classes centers
-                    # This is safer than extrapolating
                     bin_centers_subset = bin_centers[:num_classes]
                     continuous_preds = np.sum(probs * bin_centers_subset.reshape(1, -1), axis=1)
                     logger.warning(f"More bin centers ({num_centers}) than classes ({num_classes}). Using first {num_classes} centers.")
                 else:
-                    # If we have more classes than bin centers, we need to interpolate or extrapolate
-                    # Let's use linear spacing as a reasonable approach
+                    # If we have more classes than bin centers, extrapolate centers with consistent spacing
                     if num_centers >= 2:
-                        # Get the spacing from existing centers to extrapolate
                         bin_spacing = (bin_centers[-1] - bin_centers[0]) / (num_centers - 1)
-                        # Create extended bin centers with consistent spacing
                         extended_centers = np.linspace(
                             bin_centers[0],
                             bin_centers[0] + (num_classes - 1) * bin_spacing,
@@ -645,14 +648,18 @@ class ActivationPredictor(nn.Module):
                         continuous_preds = np.sum(probs * extended_centers.reshape(1, -1), axis=1)
                         logger.warning(f"More classes ({num_classes}) than bin centers ({num_centers}). Extrapolating additional centers.")
                     else:
-                        # Fallback if we don't have enough centers to estimate spacing
+                        # Fallback if we can't estimate spacing
                         continuous_preds = np.argmax(probs, axis=1).astype(float)
                         logger.warning(f"Cannot properly map classes to continuous values. Using class indices as approximation.")
                 
                 predictions = continuous_preds
-            elif self.head_type == "regression" and self.activation_mean is not None and self.activation_std is not None:
-                # For regression, denormalize predictions if normalization parameters are available
-                predictions = predictions * self.activation_std + self.activation_mean
+                
+            # For regression, we're now making the head produce outputs in the target range directly
+            # No denormalization needed - the raw outputs from the model should be in the target range
+            
+            # This is the old approach with normalization we're removing:
+            # elif self.head_type == "regression" and self.activation_mean is not None and self.activation_std is not None:
+            #     predictions = predictions * self.activation_std + self.activation_mean
         
         # Prepare return values
         if return_activations and all_activations:

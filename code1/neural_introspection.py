@@ -1225,9 +1225,28 @@ def main():
         summary["monitoring"]["activation_analysis"] = trainer.metrics["activation_analysis"]
     
     # Save summary as JSON
+    import json
+    # np is already imported at the top of the file
+    
+    # Helper function to convert numpy types to Python types for JSON serialization
+    def convert_for_json(obj):
+        if isinstance(obj, (np.integer, np.floating, np.bool_)):
+            return obj.item()  # Convert to Python type
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()  # Convert to list
+        elif isinstance(obj, dict):
+            return {k: convert_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_for_json(item) for item in obj]
+        else:
+            return obj
+    
+    # Convert summary to JSON-serializable format
+    json_safe_summary = convert_for_json(summary)
+    
+    # Save to file
     with open(summary_path, "w") as f:
-        import json
-        json.dump(summary, f, indent=2)
+        json.dump(json_safe_summary, f, indent=2)
     
     logger.info(f"Summary saved to {summary_path}")
     logger.info("Neural introspection pipeline completed successfully!")

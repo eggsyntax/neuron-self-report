@@ -824,16 +824,18 @@ class PredictorTrainer:
                     param.requires_grad = False
                 logger.info("Freezing base model parameters (selective unfreezing not available)")
 
-        # Make the head trainable only if we're not unfreezing the model
-        # When unfreezing, we want to keep the head frozen to force the model to adapt
+        # Fixed approach: When unfreezing the model, use a fixed projection head
+        # This forces the model itself to adapt its representations 
         if unfreeze_strategy == "none":
+            # When not unfreezing the model, train only the head
             for param in self.predictor.head.parameters():
                 param.requires_grad = True
+            logger.info("Training only the prediction head (model layers frozen)")
         else:
-            # Freeze the head when unfreezing parts of the model
+            # When unfreezing model layers, keep the head fixed
             for param in self.predictor.head.parameters():
                 param.requires_grad = False
-            logger.info("Prediction head frozen since model unfreezing strategy is enabled")
+            logger.info(f"Using fixed head with trainable model layers (unfreezing strategy: {unfreeze_strategy})")
 
         # Only optimize parameters that require gradients
         trainable_params = [p for p in self.predictor.parameters() if p.requires_grad]
@@ -889,6 +891,22 @@ class PredictorTrainer:
                 else:
                     outputs = self.predictor(input_ids, attention_mask)
                     loss = loss_fn(outputs, labels)
+                    
+                    # DEBUG: Log raw outputs, labels and loss during training
+                    if step == 0 and epoch < 2:  # Only log for first batch in first 2 epochs
+                        logger.info(f"DEBUG - Epoch {epoch+1}, First batch:")
+                        logger.info(f"  Outputs shape: {outputs.shape}, Labels shape: {labels.shape}")
+                        logger.info(f"  Raw outputs: {outputs.detach().cpu().numpy()[:3]}")
+                        logger.info(f"  Raw labels: {labels.detach().cpu().numpy()[:3]}")
+                        logger.info(f"  Loss: {loss.item()}")
+                        
+                        # If we have normalization params available on the predictor
+                        if hasattr(self.predictor, 'activation_mean') and hasattr(self.predictor, 'activation_std'):
+                            logger.info(f"  Normalization params - Mean: {self.predictor.activation_mean}, Std: {self.predictor.activation_std}")
+                            
+                            # If normalized, show what denormalized values would be
+                            denorm_outputs = outputs.detach().cpu().numpy() * self.predictor.activation_std + self.predictor.activation_mean
+                            logger.info(f"  Denormalized outputs: {denorm_outputs[:3]}")
 
                 # Backward pass
                 loss.backward()
@@ -900,6 +918,65 @@ class PredictorTrainer:
                 # Track gradients if enabled
                 if track_gradients and self.gradient_tracker is not None:
                     self.gradient_tracker.step()
+                
+                # DEBUG: Check gradient flow in first epoch, first step
+                if epoch == 0 and step == 0:
+                    # Check if gradients are flowing properly
+                    has_grad = 0
+                    no_grad = 0
+                    for name, param in self.predictor.named_parameters():
+                        if param.requires_grad:
+                            if param.grad is not None and param.grad.abs().sum().item() > 0:
+                                has_grad += 1
+                            else:
+                                no_grad += 1
+                                if no_grad < 5:  # Only log a few to avoid spamming
+                                    logger.info(f"DEBUG - No gradient for param: {name}, shape: {param.shape}")
+                    
+                    logger.info(f"DEBUG - Parameters with gradients: {has_grad}, without gradients: {no_grad}")
+                    
+                    # Specifically check the target neuron's parameters if available
+                    if hasattr(self.predictor, 'target_layer') and hasattr(self.predictor, 'target_neuron'):
+                        # Try to access the target neuron's parameters, structure varies by model
+                        target_layer = self.predictor.target_layer
+                        target_neuron = self.predictor.target_neuron
+                        
+                        # For GPT-2 style models, try to find MLP weights for target layer
+                        try:
+                            # Paths might be different depending on model architecture
+                            possible_paths = [
+                                f"base_model.blocks.{target_layer}.mlp.W_out.weight[{target_neuron}]",
+                                f"base_model.transformer.h.{target_layer}.mlp.c_proj.weight[{target_neuron}]"
+                            ]
+                            
+                            for path in possible_paths:
+                                parts = path.split('.')
+                                current = self.predictor
+                                for part in parts[:-1]:
+                                    if '[' in part:  # Handle indexing
+                                        part_name, idx = part.split('[')
+                                        idx = int(idx.replace(']', ''))
+                                        current = getattr(current, part_name)[idx]
+                                    else:
+                                        current = getattr(current, part) if hasattr(current, part) else None
+                                        if current is None:
+                                            break
+                                
+                                if current is not None:
+                                    final_part = parts[-1]
+                                    if '[' in final_part:
+                                        part_name, idx = final_part.split('[')
+                                        idx = int(idx.replace(']', ''))
+                                        param = getattr(current, part_name)[idx]
+                                    else:
+                                        param = getattr(current, final_part)
+                                    
+                                    if hasattr(param, 'grad') and param.grad is not None:
+                                        logger.info(f"DEBUG - Target neuron param '{path}' grad: {param.grad.abs().sum().item()}")
+                                    else:
+                                        logger.info(f"DEBUG - Target neuron param '{path}' has no gradient")
+                        except Exception as e:
+                            logger.info(f"DEBUG - Error accessing target neuron parameters: {e}")
 
                 # Optimizer step
                 optimizer.step()
@@ -1011,6 +1088,23 @@ class PredictorTrainer:
         # Evaluate on test set
         test_loss, test_metrics = self._evaluate_on_test()
         logger.info(f"Test Loss: {test_loss:.4f}, {self._format_metrics(test_metrics, 'Test')}")
+        
+        # DEBUG: Log final test metrics with explanation
+        logger.info(f"DEBUG - Final test metrics details:")
+        for key, value in test_metrics.items():
+            logger.info(f"  - {key}: {value}")
+            
+        # DEBUG: If regression, explain potential normalization issues
+        if hasattr(self.predictor, 'head_type') and self.predictor.head_type == 'regression':
+            if hasattr(self.predictor, 'activation_mean') and hasattr(self.predictor, 'activation_std'):
+                logger.info(f"DEBUG - Normalization params used in prediction:")
+                logger.info(f"  - activation_mean: {self.predictor.activation_mean}")
+                logger.info(f"  - activation_std: {self.predictor.activation_std}")
+                
+                # Explain how normalization affects MSE calculation
+                logger.info(f"NOTE: The MSE value in test metrics is raw (unnormalized). To compare with final report MSE:")
+                logger.info(f"  - Raw MSE: {test_metrics.get('mse', 'N/A')}")
+                logger.info(f"  - MSE after normalization: {test_metrics.get('mse', 0)/(self.predictor.activation_std**2) if self.predictor.activation_std else 'N/A'}")
 
         return self.metrics
 
@@ -1098,8 +1192,12 @@ class PredictorTrainer:
 
         loss_fn = self._get_loss_function()
 
+        # DEBUG: Log beginning of evaluation
+        logger.info(f"DEBUG - Starting evaluation on {split_name} set with {len(data_loader)} batches")
+
+        first_batch_logged = False
         with torch.no_grad():
-            for batch in data_loader:
+            for batch_idx, batch in enumerate(data_loader):
                 # Move batch to device
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
@@ -1108,6 +1206,15 @@ class PredictorTrainer:
                 # Forward pass
                 outputs = self.predictor(input_ids, attention_mask)
                 loss = loss_fn(outputs, labels)
+
+                # DEBUG: Log first batch outputs
+                if not first_batch_logged:
+                    logger.info(f"DEBUG - {split_name} evaluation, first batch:")
+                    logger.info(f"  Outputs shape: {outputs.shape}, Labels shape: {labels.shape}")
+                    logger.info(f"  First 3 outputs: {outputs.cpu().numpy()[:3]}")
+                    logger.info(f"  First 3 labels: {labels.cpu().numpy()[:3]}")
+                    logger.info(f"  Batch loss: {loss.item()}")
+                    first_batch_logged = True
 
                 # Track loss and outputs
                 total_loss += loss.item()
@@ -1431,40 +1538,30 @@ class PredictorTrainer:
         # Create visualization
         plt.figure(figsize=(10, 8))
         
-        # Automatic bias correction for predictions
+        # Convert to numpy arrays for analysis
         predictions_array = np.array(predictions)
         actuals_array = np.array(actuals)
         
-        # Check if there's a systematic bias in predictions
+        # Calculate error statistics for informational purposes only
         mean_error = np.mean(predictions_array - actuals_array)
         error_std = np.std(predictions_array - actuals_array)
+        logger.info(f"Prediction error statistics - Mean: {mean_error:.4f}, StdDev: {error_std:.4f}")
         
-        # If a systematic bias exists (mean error is significant compared to std)
-        has_systematic_bias = abs(mean_error) > 0.1 * (max(actuals_array) - min(actuals_array))
-        
-        # Create corrected predictions
-        corrected_predictions = predictions_array - mean_error
-        
-        # Plot both original and corrected predictions
-        plt.scatter(actuals_array, predictions_array, alpha=0.6, label="Original Predictions")
-        
-        # If we found a systematic bias, also plot corrected predictions
-        if has_systematic_bias:
-            plt.scatter(actuals_array, corrected_predictions, alpha=0.6, label="Bias-Corrected", marker='x')
-            plt.legend()
+        # Simple scatter plot without any bias correction
+        plt.scatter(actuals_array, predictions_array, alpha=0.6, label="Predictions")
         
         # Add perfect prediction line
-        min_val = min(min(actuals_array), min(predictions_array), min(corrected_predictions) if has_systematic_bias else float('inf'))
-        max_val = max(max(actuals_array), max(predictions_array), max(corrected_predictions) if has_systematic_bias else float('-inf'))
+        min_val = min(min(actuals_array), min(predictions_array))
+        max_val = max(max(actuals_array), max(predictions_array))
         plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Perfect Prediction")
+        plt.legend()
         
         # Calculate correlation and error metrics
-        original_correlation = np.corrcoef(actuals_array, predictions_array)[0, 1]
-        original_mse = np.mean((predictions_array - actuals_array) ** 2)
+        correlation = np.corrcoef(actuals_array, predictions_array)[0, 1]
+        mse = np.mean((predictions_array - actuals_array) ** 2)
+        mae = np.mean(np.abs(predictions_array - actuals_array))
         
-        # Calculate metrics for corrected predictions too
-        corrected_correlation = np.corrcoef(actuals_array, corrected_predictions)[0, 1] if has_systematic_bias else None
-        corrected_mse = np.mean((corrected_predictions - actuals_array) ** 2) if has_systematic_bias else None
+        # No corrected predictions anymore - we're using a single consistent approach
         
         # Add metrics as text
         plt.title(f"Predictions vs. Actual Activations ({split} split)")
@@ -1472,10 +1569,19 @@ class PredictorTrainer:
         plt.ylabel("Predicted Activations")
         
         # Create metrics text
-        metrics_text = f"Original Metrics:\n  Correlation: {original_correlation:.4f}\n  MSE: {original_mse:.4f}\n  Mean Error: {mean_error:.4f}"
-        
-        if has_systematic_bias:
-            metrics_text += f"\n\nBias-Corrected Metrics:\n  Correlation: {corrected_correlation:.4f}\n  MSE: {corrected_mse:.4f}"
+        metrics_text = f"Metrics:\n  Correlation: {correlation:.4f}\n  MSE: {mse:.4f}\n  MAE: {mae:.4f}\n  Mean Error: {mean_error:.4f}"
+            
+        # Log metrics calculation details
+        logger.info(f"Visualization metrics calculation:")
+        logger.info(f"  - Correlation: {correlation:.6f}")
+        logger.info(f"  - MSE: {mse:.6f}")
+        logger.info(f"  - MAE: {mae:.6f}")
+        logger.info(f"  - Mean error: {mean_error:.6f}")
+            
+        # Show examples of actual vs predicted values
+        logger.info(f"Sample actual vs predicted values:")
+        for i in range(min(5, len(actuals_array))):
+            logger.info(f"  #{i}: Actual={actuals_array[i]:.4f}, Predicted={predictions_array[i]:.4f}, Error={predictions_array[i]-actuals_array[i]:.4f}")
         
         plt.text(
             0.05, 0.95,
@@ -1497,50 +1603,27 @@ class PredictorTrainer:
         plt.savefig(output_file)
         plt.close()
         
-        # Log metrics with original and corrected values if applicable
-        if has_systematic_bias:
-            logger.info(f"Saved predictions visualization to {output_file}")
-            logger.info(f"Original metrics - Correlation: {original_correlation:.4f}, MSE: {original_mse:.4f}, Mean Error: {mean_error:.4f}")
-            logger.info(f"Corrected metrics - Correlation: {corrected_correlation:.4f}, MSE: {corrected_mse:.4f}")
-        else:
-            logger.info(f"Saved predictions visualization to {output_file}")
-            logger.info(f"Correlation: {original_correlation:.4f}, MSE: {original_mse:.4f}")
+        # Log metrics
+        logger.info(f"Saved predictions visualization to {output_file}")
+        logger.info(f"Metrics - Correlation: {correlation:.4f}, MSE: {mse:.4f}, MAE: {mae:.4f}")
         
         # Save individual samples to CSV for detailed analysis
         samples_file = os.path.join(self.output_dir, f"prediction_samples_{split}_{timestamp}.csv")
         with open(samples_file, "w") as f:
-            # Include corrected predictions in the CSV if we detected a systematic bias
-            if has_systematic_bias:
-                f.write("text,actual,predicted,corrected_predicted,original_error,corrected_error\n")
-                for i, (text, actual, pred) in enumerate(zip(texts, actuals, predictions)):
-                    # Clean text for CSV
-                    clean_text = text.replace('"', '""')
-                    # Get the corrected prediction for this sample
-                    corrected_pred = corrected_predictions[i]
-                    # Calculate errors
-                    original_error = pred - actual
-                    corrected_error = corrected_pred - actual
-                    # Write the row with corrected predictions
-                    f.write(f'"{clean_text}",{actual:.6f},{pred:.6f},{corrected_pred:.6f},{original_error:.6f},{corrected_error:.6f}\n')
-            else:
-                # Original format if no systematic bias detected
-                f.write("text,actual,predicted,error\n")
-                for text, actual, pred in zip(texts, actuals, predictions):
-                    # Clean text for CSV
-                    clean_text = text.replace('"', '""')
-                    error = pred - actual
-                    f.write(f'"{clean_text}",{actual:.6f},{pred:.6f},{error:.6f}\n')
+            f.write("text,actual,predicted,error\n")
+            for text, actual, pred in zip(texts, actuals, predictions):
+                # Clean text for CSV
+                clean_text = text.replace('"', '""')
+                error = pred - actual
+                f.write(f'"{clean_text}",{actual:.6f},{pred:.6f},{error:.6f}\n')
         
-        # Log information about the predictions and corrections
-        if has_systematic_bias:
-            logger.info(f"Saved predictions with bias correction to {samples_file} (mean bias: {mean_error:.4f})")
-        else:
-            logger.info(f"Saved individual predictions to {samples_file} (no systematic bias detected)")
+        logger.info(f"Saved individual predictions to {samples_file}")
         
-        # Build the result dictionary with both original and corrected metrics
+        # Build the result dictionary
         result = {
-            "correlation": original_correlation,
-            "mse": original_mse,
+            "correlation": correlation,
+            "mse": mse,
+            "mae": mae,
             "mean_error": mean_error,
             "predictions": predictions,
             "actuals": actuals,
@@ -1548,15 +1631,6 @@ class PredictorTrainer:
             "visualization_file": output_file,
             "samples_file": samples_file,
         }
-        
-        # Add corrected metrics if bias was detected
-        if has_systematic_bias:
-            result["has_systematic_bias"] = True
-            result["corrected_correlation"] = corrected_correlation
-            result["corrected_mse"] = corrected_mse
-            result["corrected_predictions"] = corrected_predictions.tolist()
-        else:
-            result["has_systematic_bias"] = False
             
         return result
 

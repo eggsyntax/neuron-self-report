@@ -877,16 +877,18 @@ def evaluate_model(
         "figure_path": figure_path,
     }
 
-def archive_existing_output(output_dir: str, force_overwrite: bool = False) -> bool:
+def archive_existing_output(output_dir: str, force_overwrite: bool = False, args=None) -> bool:
     """
     Archive existing output directory if it exists.
     
     This function checks if the output directory exists and contains any content.
-    If it does, it moves the entire contents to an archive directory with a timestamp.
+    If it does, it moves the entire contents to an archive directory with a descriptive
+    name and timestamp.
     
     Args:
         output_dir: Path to the output directory
         force_overwrite: Whether to overwrite without archiving
+        args: Optional arguments object containing experiment parameters
         
     Returns:
         Boolean indicating whether archiving was performed
@@ -909,9 +911,54 @@ def archive_existing_output(output_dir: str, force_overwrite: bool = False) -> b
     archive_root = os.path.join(os.path.dirname(output_dir), "output-archive")
     os.makedirs(archive_root, exist_ok=True)
     
-    # Create timestamped subdirectory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archive_dir = os.path.join(archive_root, f"{os.path.basename(output_dir)}_{timestamp}")
+    # Create descriptive archive directory name with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    
+    # Check if we have the results from a previous run to include in the name
+    performance_suffix = ""
+    
+    # This part is executed when archiving after a successful run
+    try:
+        # Try to load the existing summary file to get performance metrics
+        import glob
+        import json
+        summary_files = glob.glob(os.path.join(output_dir, "introspection_summary_*.json"))
+        if summary_files and os.path.exists(summary_files[0]):
+            with open(summary_files[0], 'r') as f:
+                summary_data = json.load(f)
+                if "performance_summary" in summary_data:
+                    perf = summary_data["performance_summary"]
+                    if "mse" in perf:
+                        performance_suffix = f"-mse{perf['mse']}"
+                    elif "correlation" in perf:
+                        performance_suffix = f"-corr{perf['correlation']}"
+    except:
+        # If anything fails, just skip the performance part
+        pass
+    
+    # Extract experiment parameters from args
+    if args:
+        head_type = getattr(args, 'head_type', 'unknown')
+        unfreeze_strategy = getattr(args, 'unfreeze', 'unknown')
+        dataset_size = getattr(args, 'dataset_size', 0)
+        texts_path = getattr(args, 'texts', None)
+        
+        # Determine data source descriptor
+        if texts_path and os.path.exists(texts_path):
+            data_source = os.path.basename(texts_path).split('.')[0]
+        else:
+            data_source = "generated"
+    else:
+        # If we don't have args, use a simpler naming scheme
+        head_type = "unknown"
+        unfreeze_strategy = "unknown"
+        dataset_size = 0
+        data_source = "unknown"
+    
+    # Build descriptive directory name
+    dir_name = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{data_source}_{timestamp}{performance_suffix}"
+    
+    archive_dir = os.path.join(archive_root, dir_name)
     
     # Move all contents to archive directory
     import shutil
@@ -953,7 +1000,7 @@ def main():
     args = parse_arguments()
     
     # Archive existing output if necessary
-    archive_existing_output(args.output_dir, args.force_overwrite)
+    archive_existing_output(args.output_dir, args.force_overwrite, args)
     
     # Set up output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -1073,6 +1120,56 @@ def main():
     summary_path = os.path.join(args.output_dir, f"introspection_summary_{timestamp}.json")
     
     # Create a summary dictionary with key results
+    # Get training metrics from the trainer
+    training_metrics = {}
+    if hasattr(trainer, 'metrics'):
+        if 'train_metrics' in trainer.metrics and trainer.metrics['train_metrics']:
+            final_train_metrics = trainer.metrics['train_metrics'][-1]
+            training_metrics['final_train_metrics'] = final_train_metrics
+        
+        if 'val_metrics' in trainer.metrics and trainer.metrics['val_metrics']:
+            final_val_metrics = trainer.metrics['val_metrics'][-1]
+            training_metrics['final_val_metrics'] = final_val_metrics
+        
+        if 'best_epoch' in trainer.metrics:
+            training_metrics['best_epoch'] = trainer.metrics['best_epoch']
+            
+        if 'train_time' in trainer.metrics:
+            training_metrics['train_time'] = trainer.metrics['train_time']
+
+    # Calculate improvement metrics if we have validation metrics
+    improvement_metrics = {}
+    if hasattr(trainer, 'metrics') and 'val_metrics' in trainer.metrics and len(trainer.metrics['val_metrics']) > 1:
+        first_metrics = trainer.metrics['val_metrics'][0]
+        last_metrics = trainer.metrics['val_metrics'][-1]
+        
+        if 'mse' in first_metrics and 'mse' in last_metrics:
+            improvement_metrics['mse_improvement'] = round(first_metrics['mse'] - last_metrics['mse'], 4)
+            improvement_metrics['mse_improvement_pct'] = round((first_metrics['mse'] - last_metrics['mse']) / first_metrics['mse'] * 100, 2)
+            
+        if 'r2_score' in last_metrics:
+            improvement_metrics['final_r2'] = round(last_metrics['r2_score'], 4)
+            
+    # Create directory name structure for easy reference
+    head_type = args.head_type
+    unfreeze_strategy = args.unfreeze
+    dataset_size = args.dataset_size
+    
+    # Determine data source descriptor
+    texts_path = getattr(args, 'texts', None)
+    if texts_path and os.path.exists(texts_path):
+        data_source = os.path.basename(texts_path).split('.')[0]
+    else:
+        data_source = "generated"
+        
+    # Build archive directory name format for reference
+    dir_name_format = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{data_source}"
+    
+    if 'mse' in results:
+        dir_name_format += f"-mse{round(results['mse'], 2)}"
+    elif 'correlation' in results:
+        dir_name_format += f"-corr{round(results['correlation'], 2)}"
+            
     summary = {
         "experiment_time": timestamp,
         "model": args.model,
@@ -1105,6 +1202,14 @@ def main():
             "mse": results["mse"],
             "report_path": results["report_path"],
             "figure_path": results["figure_path"],
+        },
+        "performance_summary": {
+            "correlation": round(results["correlation"], 4),
+            "mse": round(results["mse"], 4),
+            "directory_name_format": dir_name_format,
+            "training_time_seconds": training_metrics.get('train_time', 0),
+            "best_epoch": training_metrics.get('best_epoch', 0),
+            **improvement_metrics  # Add all improvement metrics
         }
     }
     
@@ -1141,11 +1246,30 @@ def main():
     if args.track_activations:
         print(f"Activation analysis: {os.path.join(args.output_dir, 'activation_analysis')}")
     
+    # Print training information
+    if hasattr(trainer, 'metrics') and 'train_time' in trainer.metrics:
+        mins, secs = divmod(int(trainer.metrics['train_time']), 60)
+        print(f"Training time: {mins}m {secs}s")
+    
+    if hasattr(trainer, 'metrics') and 'best_epoch' in trainer.metrics:
+        print(f"Best epoch: {trainer.metrics['best_epoch']}/{args.epochs}")
+    
     # Always print results
     print(f"Results:")
     print(f"  Correlation: {results['correlation']:.4f}")
     print(f"  MSE: {results['mse']:.4f}")
+    
+    # Print improvement metrics if available
+    if 'improvement_metrics' in locals() and improvement_metrics:
+        if 'mse_improvement_pct' in improvement_metrics:
+            print(f"  MSE improvement: {improvement_metrics['mse_improvement']:.4f} ({improvement_metrics['mse_improvement_pct']}%)")
+        if 'final_r2' in improvement_metrics:
+            print(f"  Final R² score: {improvement_metrics['final_r2']:.4f}")
+            
     print(f"Output directory: {args.output_dir}")
+    
+    # Display directory naming format for when it's archived
+    print(f"Archive directory format: {dir_name_format}")
     print("="*60 + "\n")
 
 if __name__ == "__main__":

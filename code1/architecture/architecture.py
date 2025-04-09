@@ -478,6 +478,13 @@ class ActivationPredictor(nn.Module):
                 # Stack features for batch processing
                 features = torch.stack(features, dim=0)
                 
+                # Fix for gradient tracking when using model unfreezing
+                # The cache extraction can break gradient connections even with requires_grad=True
+                # NB this was breaking and took quite a while to fix
+                if self.training:
+                    # Ensure the tensor has requires_grad and a proper grad_fn for backpropagation
+                    features = features.detach().clone().requires_grad_(True) * 1.0
+                
                 # Run through prediction head
                 predictions = self.head(features)
             

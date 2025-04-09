@@ -73,6 +73,8 @@ def parse_arguments():
                         help="Specific layer to analyze (if None, scan for most interesting)")
     parser.add_argument("--neuron", type=int, default=None,
                         help="Specific neuron to analyze (if None, scan for most interesting)")
+    parser.add_argument("--last-candidate-layer", type=int, default=None,
+                        help="Last layer to consider for neuron selection, useful for unfreezing experiments")
     parser.add_argument("--layer-type", type=str, default="mlp_out", 
                         choices=["mlp_out", "resid_post"],
                         help="Type of layer to extract activations from")
@@ -232,7 +234,8 @@ def select_neuron(
     layer_type: str = "mlp_out",
     token_pos: Union[int, str] = "last",
     device: str = "cpu",
-    output_dir: str = "output"
+    output_dir: str = "output",
+    last_candidate_layer: Optional[int] = None
 ) -> Tuple[int, int, Dict]:
     """
     Select an interesting neuron for analysis.
@@ -249,6 +252,7 @@ def select_neuron(
         token_pos: Token position to analyze
         device: Device to run on
         output_dir: Directory for saving visualizations
+        last_candidate_layer: Last layer to consider for neuron selection
         
     Returns:
         Tuple of (layer_index, neuron_index, neuron_stats)
@@ -265,12 +269,16 @@ def select_neuron(
     # Analyze a subset of texts for efficiency
     scan_texts = texts[:min(100, len(texts))]
     
-    # Scan for interesting neurons
+    # Determine max layer to scan based on last_candidate_layer if specified
+    max_layer = last_candidate_layer if last_candidate_layer is not None else None
+    
+    # Scan for interesting neurons, limiting to max_layer if specified
     scan_results = scanner.scan_neurons(
         texts=scan_texts,
         token_pos=token_pos,
         layer_type=layer_type,
         top_k=10,
+        max_layer=max_layer,
     )
     
     # If layer specified but neuron not specified, find most interesting neuron in that layer
@@ -291,9 +299,16 @@ def select_neuron(
             layer_neurons.sort(key=lambda x: x[2]["score"], reverse=True)
             top_layer, top_neuron, top_stats = layer_neurons[0]
     else:
-        # Use the top neuron across all layers
-        top_layer, top_neuron = scan_results["top_neurons"][0][0]
-        top_stats = scan_results["top_neurons"][0][1]
+        # For last_candidate_layer, we already limited the scanning to those layers,
+        # so we just need to use the top neuron from the scan results
+        if last_candidate_layer is not None:
+            logger.info(f"Using top neuron from layers up to {last_candidate_layer}")
+            top_layer, top_neuron = scan_results["top_neurons"][0][0]
+            top_stats = scan_results["top_neurons"][0][1]
+        else:
+            # Use the top neuron across all layers
+            top_layer, top_neuron = scan_results["top_neurons"][0][0]
+            top_stats = scan_results["top_neurons"][0][1]
     
     logger.info(f"Selected neuron: Layer {top_layer}, Neuron {top_neuron}")
     logger.info(f"  Score: {top_stats['score']:.4f}, Variance: {top_stats['variance']:.4f}, "
@@ -914,46 +929,70 @@ def archive_existing_output(output_dir: str, force_overwrite: bool = False, args
     # Create descriptive archive directory name with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     
-    # Check if we have the results from a previous run to include in the name
+    # Initialize parameters with defaults
+    head_type = "unknown"
+    unfreeze_strategy = "unknown"
+    dataset_size = 0
+    data_source = "unknown"
     performance_suffix = ""
     
-    # This part is executed when archiving after a successful run
+    # Try to load the existing summary file to get parameters from the previous run
     try:
-        # Try to load the existing summary file to get performance metrics
         import glob
         import json
         summary_files = glob.glob(os.path.join(output_dir, "introspection_summary_*.json"))
         if summary_files and os.path.exists(summary_files[0]):
             with open(summary_files[0], 'r') as f:
                 summary_data = json.load(f)
+                
+                # Get performance metrics
                 if "performance_summary" in summary_data:
                     perf = summary_data["performance_summary"]
                     if "mse" in perf:
                         performance_suffix = f"-mse{perf['mse']}"
                     elif "correlation" in perf:
                         performance_suffix = f"-corr{perf['correlation']}"
-    except:
-        # If anything fails, just skip the performance part
-        pass
-    
-    # Extract experiment parameters from args
-    if args:
-        head_type = getattr(args, 'head_type', 'unknown')
-        unfreeze_strategy = getattr(args, 'unfreeze', 'unknown')
-        dataset_size = getattr(args, 'dataset_size', 0)
-        texts_path = getattr(args, 'texts', None)
+                
+                # Get training parameters from the previous run
+                if "training" in summary_data:
+                    training = summary_data["training"]
+                    head_type = training.get("head_type", head_type)
+                    unfreeze_strategy = training.get("unfreeze_strategy", unfreeze_strategy)
+                
+                # Get dataset parameters from the previous run
+                if "dataset" in summary_data:
+                    dataset = summary_data["dataset"]
+                    dataset_size = dataset.get("size", dataset_size)
+                
+                # Try to determine data source from dataset paths
+                if "dataset" in summary_data and "csv_path" in summary_data["dataset"]:
+                    csv_path = summary_data["dataset"]["csv_path"]
+                    # Check if it was generated or from a file
+                    if "generated" in csv_path.lower():
+                        data_source = "generated"
+                    else:
+                        # Try to extract a dataset name from the path
+                        path_parts = csv_path.split(os.sep)
+                        for part in reversed(path_parts):
+                            if part.endswith('.txt') or part.endswith('.csv'):
+                                data_source = part.split('.')[0]
+                                break
+    except Exception as e:
+        print(f"Warning: Failed to extract parameters from previous run: {e}")
         
-        # Determine data source descriptor
+    # If we couldn't get parameters from the summary file, fall back to args
+    if head_type == "unknown" and args:
+        head_type = getattr(args, 'head_type', 'unknown')
+    if unfreeze_strategy == "unknown" and args:
+        unfreeze_strategy = getattr(args, 'unfreeze', 'unknown')
+    if dataset_size == 0 and args:
+        dataset_size = getattr(args, 'dataset_size', 0)
+    if data_source == "unknown" and args:
+        texts_path = getattr(args, 'texts', None)
         if texts_path and os.path.exists(texts_path):
             data_source = os.path.basename(texts_path).split('.')[0]
         else:
             data_source = "generated"
-    else:
-        # If we don't have args, use a simpler naming scheme
-        head_type = "unknown"
-        unfreeze_strategy = "unknown"
-        dataset_size = 0
-        data_source = "unknown"
     
     # Build descriptive directory name
     dir_name = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{data_source}_{timestamp}{performance_suffix}"
@@ -1062,7 +1101,8 @@ def main():
         layer_type=args.layer_type,
         token_pos=args.token_pos,
         device=device,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        last_candidate_layer=args.last_candidate_layer
     )
     
     # Generate dataset

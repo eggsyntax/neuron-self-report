@@ -43,6 +43,7 @@ class NeuronScanner:
         layer_type: str = "mlp_out",
         top_k: int = 10,
         batch_size: int = 8,
+        max_layer: Optional[int] = None,
     ) -> Dict:
         """
         Scan model for neurons with diverse activation patterns.
@@ -53,6 +54,7 @@ class NeuronScanner:
             layer_type: Type of layer to scan ("mlp_out" or "resid_post")
             top_k: Number of top neurons to return
             batch_size: Batch size for processing
+            max_layer: Optional upper limit on layer index to scan (inclusive)
         
         Returns:
             Dictionary of neuron statistics and rankings
@@ -78,7 +80,10 @@ class NeuronScanner:
         
         # Score neurons based on variance and range
         neuron_scores = {}
-        for layer in range(self.n_layers):
+        # Determine the max layer to scan
+        n_layers_to_scan = min(self.n_layers, max_layer + 1) if max_layer is not None else self.n_layers
+        
+        for layer in range(n_layers_to_scan):
             layer_size = all_activations.shape[2]  # Get actual size from activations
             
             for neuron_idx in range(layer_size):

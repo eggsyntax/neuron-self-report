@@ -949,9 +949,10 @@ def archive_existing_output(output_dir: str, force_overwrite: bool = False, args
                 if "performance_summary" in summary_data:
                     perf = summary_data["performance_summary"]
                     if "mse" in perf:
-                        performance_suffix = f"-mse{perf['mse']}"
+                        # Format MSE with just 2 decimal places
+                        performance_suffix = f"-mse{perf['mse']:.2f}"
                     elif "correlation" in perf:
-                        performance_suffix = f"-corr{perf['correlation']}"
+                        performance_suffix = f"-corr{perf['correlation']:.2f}"
                 
                 # Get training parameters from the previous run
                 if "training" in summary_data:
@@ -994,8 +995,15 @@ def archive_existing_output(output_dir: str, force_overwrite: bool = False, args
         else:
             data_source = "generated"
     
-    # Build descriptive directory name
-    dir_name = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{data_source}_{timestamp}{performance_suffix}"
+    # Build descriptive directory name without duplicating timestamps
+    # We remove any existing timestamps in extracted data (neuron_lXX_nXX_YYYYMMDD_HHMMSS)
+    data_source_cleaned = data_source
+    if '_2025' in data_source:
+        # Extract just the base name before any timestamp
+        data_source_cleaned = data_source.split('_2025')[0]
+    
+    # Build the directory name with timestamp and formatted performance suffix
+    dir_name = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{data_source_cleaned}-{performance_suffix}-{timestamp}"
     
     archive_dir = os.path.join(archive_root, dir_name)
     
@@ -1206,9 +1214,9 @@ def main():
     dir_name_format = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{data_source}"
     
     if 'mse' in results:
-        dir_name_format += f"-mse{round(results['mse'], 2)}"
+        dir_name_format += f"-mse{results['mse']:.2f}"
     elif 'correlation' in results:
-        dir_name_format += f"-corr{round(results['correlation'], 2)}"
+        dir_name_format += f"-corr{results['correlation']:.2f}"
             
     summary = {
         "experiment_time": timestamp,

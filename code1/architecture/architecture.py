@@ -471,26 +471,76 @@ class ActivationPredictor(nn.Module):
                     return_type=None,
                 )
                 
-                # Extract features from residual stream at the desired position
-                features = []
-                for i in range(batch_size):
-                    pos = token_positions[i].item()
-                    # Use the residual stream at the specified feature layer for prediction
-                    feature = cache["resid_post", self.feature_layer][i, pos]
-                    features.append(feature)
+                # This is the critical part where the computational graph gets broken
+                # Instead of extracting from cache directly, we need to extract in a way that preserves gradients
                 
-                # Stack features for batch processing
-                features = torch.stack(features, dim=0)
+                # We need to get our feature layer outputs DIRECTLY from the model
+                # First run last token through all transformer layers
+                batch_indices = torch.arange(batch_size, device=input_ids.device)
                 
-                # Fix for gradient tracking when using model unfreezing
-                # The cache extraction can break gradient connections even with requires_grad=True
-                # NB this was breaking and took quite a while to fix
+                # If self.training, we need a different approach to preserve the gradient path
                 if self.training:
-                    # Ensure the tensor has requires_grad and a proper grad_fn for backpropagation
-                    features = features.detach().clone().requires_grad_(True) * 1.0
+                    print("Using direct computation path to preserve gradients")
+                    
+                    # Get the embeddings first
+                    with torch.set_grad_enabled(True):
+                        # Get embeddings (input to first layer)
+                        embeddings = self.base_model.embed(input_ids)
+                        print(f"Embeddings requires_grad: {embeddings.requires_grad}")
+                        
+                        # Run through each layer up to our target feature layer
+                        layer_inputs = embeddings
+                        
+                        # Layer by layer execution to maintain computation graph
+                        for i in range(self.base_model.cfg.n_layers):
+                            # Run through transformer block
+                            block = self.base_model.blocks[i]
+                            layer_outputs = block(layer_inputs)
+                            layer_inputs = layer_outputs
+                            
+                            # At our feature layer, extract the features we need
+                            if i == self.feature_layer or (self.feature_layer == -1 and i == self.base_model.cfg.n_layers - 1):
+                                # Extract just the token positions we need
+                                features = []
+                                for j, pos in enumerate(token_positions):
+                                    feature = layer_outputs[j, pos]
+                                    features.append(feature)
+                                
+                                # Stack for batch processing
+                                features = torch.stack(features, dim=0)
+                                print(f"Direct features requires_grad: {features.requires_grad}, grad_fn: {features.grad_fn}")
+                                break
+                else:
+                    # For inference, we can use the cache approach which is faster
+                    features = []
+                    for i in range(batch_size):
+                        pos = token_positions[i].item()
+                        # Use the residual stream at the specified feature layer for prediction
+                        feature = cache["resid_post", self.feature_layer][i, pos]
+                        features.append(feature)
+                    
+                    # Stack features for batch processing
+                    features = torch.stack(features, dim=0)
+                
+                # DEBUG: Check head parameters before running prediction
+                if self.training:
+                    print(f"Head requires_grad status:")
+                    for name, param in self.head.named_parameters():
+                        print(f"  {name}: requires_grad={param.requires_grad}")
                 
                 # Run through prediction head
                 predictions = self.head(features)
+                
+                # DEBUG: Check prediction gradient info
+                if self.training:
+                    print(f"Predictions: requires_grad={predictions.requires_grad}, grad_fn={predictions.grad_fn}")
+                    
+                    # Register backward hook on predictions to capture gradient flow
+                    def grad_hook(grad):
+                        print(f"Prediction gradient in hook: norm={grad.norm().item()}")
+                        return grad
+                        
+                    predictions.register_hook(grad_hook)
             
             # Extract actual activations if requested
             if (return_activations or return_uncertainties) and self.target_layer is not None and self.target_neuron is not None:
@@ -504,6 +554,12 @@ class ActivationPredictor(nn.Module):
                     activations.append(activation)
                     
                 activations = torch.tensor(activations, device=self.device)
+                
+                # DEBUG: Print target neuron and activation information
+                if self.training:
+                    print(f"Target layer: {self.target_layer}, Target neuron: {self.target_neuron}")
+                    print(f"Layer type: {self.layer_type}, Feature layer: {self.feature_layer}")
+                    print(f"Sample activations: {activations[:3]}")
                 
                 # Calculate uncertainties if requested
                 if return_uncertainties:

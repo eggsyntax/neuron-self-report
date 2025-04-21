@@ -848,15 +848,6 @@ class PredictorTrainer:
             weight_decay=weight_decay,
         )
 
-        print("=== Optimizer parameter groups ===")
-        for idx, param_group in enumerate(optimizer.param_groups):
-            group_params = []
-            for param in param_group['params']:
-                # Find the name of the parameter by iterating over the model's named_parameters.
-                name = next((n for n, p in self.predictor.named_parameters() if p is param), "Unknown")
-                group_params.append(name)
-            print(f"Group {idx}: {group_params}")
-
         # Create learning rate scheduler
         scheduler = self._create_lr_scheduler(
             optimizer,
@@ -872,23 +863,6 @@ class PredictorTrainer:
         best_val_loss = float("inf")
         patience_counter = 0
         start_time = time.time()
-        
-        # DEBUG: Add gradient hook to track gradients during backprop
-        def hook_fn(grad):
-            print(f"Gradient in hook: shape={grad.shape}, norm={grad.norm().item()}")
-            return grad
-            
-        # Apply hook to a specific layer in predictor.base_model
-        hook_registered = False
-        for name, param in self.predictor.base_model.named_parameters():
-            if "blocks.9" in name and param.requires_grad:
-                param.register_hook(hook_fn)
-                print(f"Registered hook on {name}")
-                hook_registered = True
-                break
-                
-        if not hook_registered:
-            print("WARNING: Could not register gradient hook on layer 9")
 
         logger.info(f"Starting training for {epochs} epochs")
 
@@ -916,10 +890,7 @@ class PredictorTrainer:
                 # For regression
                 else:
                     outputs = self.predictor(input_ids, attention_mask)
-                    # DEBUG: Print outputs gradient info
-                    print(f"Outputs requires_grad: {outputs.requires_grad}, grad_fn: {outputs.grad_fn}")
                     loss = loss_fn(outputs, labels)
-                    print(f"Loss value: {loss.item()}, grad_fn: {loss.grad_fn}")
                     
                     # DEBUG: Log raw outputs, labels and loss during training
                     if step == 0 and epoch < 2:  # Only log for first batch in first 2 epochs
@@ -939,43 +910,6 @@ class PredictorTrainer:
 
                 # Backward pass
                 loss.backward()
-                
-                # Print info about parameters that should have gradients
-                if unfreeze_strategy == "after_target" and hasattr(self.predictor, 'target_layer') and self.predictor.target_layer is not None:
-                    target_layer = self.predictor.target_layer
-                    print(f"Checking gradients for layers after target layer {target_layer}")
-                    have_grads = 0
-                    no_grads = 0
-                    for name, param in self.predictor.base_model.named_parameters():
-                        # Find parameters in layers after the target
-                        for i in range(target_layer + 1, 12):  # Assuming 12 layers total
-                            if f"blocks.{i}." in name and param.requires_grad:
-                                has_grad = param.grad is not None and param.grad.abs().sum().item() > 0
-                                if has_grad:
-                                    have_grads += 1
-                                else:
-                                    no_grads += 1
-                                    if no_grads < 5:  # Limit output
-                                        print(f"Expected gradient but none found: {name}")
-                    print(f"Parameters with gradient: {have_grads}, without: {no_grads}")
-
-                print("=== Gradient norms after backward pass ===")
-                # Need to check base_model parameters too, not just predictor head
-                for name, param in self.predictor.named_parameters():
-                    if param.requires_grad:
-                        grad_norm = param.grad.norm().item() if param.grad is not None else 0.0
-                        print(f"{name}: grad norm = {grad_norm}")
-                        break
-                        
-                # Check base model parameters too for layers after target
-                if hasattr(self.predictor, 'target_layer') and self.predictor.target_layer is not None:
-                    for i in range(self.predictor.target_layer + 1, 12):  # Checking layers after target
-                        for name, param in self.predictor.base_model.named_parameters():
-                            if f"blocks.{i}." in name and param.requires_grad:
-                                grad_norm = param.grad.norm().item() if param.grad is not None else 0.0
-                                print(f"base_model.{name}: grad norm = {grad_norm}")
-                                # Just check one layer after target to limit output
-                                break
 
                 # Gradient clipping
                 if grad_clip is not None:
@@ -1261,7 +1195,7 @@ class PredictorTrainer:
         # DEBUG: Log beginning of evaluation
         logger.info(f"DEBUG - Starting evaluation on {split_name} set with {len(data_loader)} batches")
 
-        first_batch_logged = False
+        # first_batch_logged = False
         with torch.no_grad():
             for batch_idx, batch in enumerate(data_loader):
                 # Move batch to device
@@ -1274,13 +1208,13 @@ class PredictorTrainer:
                 loss = loss_fn(outputs, labels)
 
                 # DEBUG: Log first batch outputs
-                if not first_batch_logged:
-                    logger.info(f"DEBUG - {split_name} evaluation, first batch:")
-                    logger.info(f"  Outputs shape: {outputs.shape}, Labels shape: {labels.shape}")
-                    logger.info(f"  First 3 outputs: {outputs.cpu().numpy()[:3]}")
-                    logger.info(f"  First 3 labels: {labels.cpu().numpy()[:3]}")
-                    logger.info(f"  Batch loss: {loss.item()}")
-                    first_batch_logged = True
+                # if not first_batch_logged:
+                #     logger.info(f"DEBUG - {split_name} evaluation, first batch:")
+                #     logger.info(f"  Outputs shape: {outputs.shape}, Labels shape: {labels.shape}")
+                #     logger.info(f"  First 3 outputs: {outputs.cpu().numpy()[:3]}")
+                #     logger.info(f"  First 3 labels: {labels.cpu().numpy()[:3]}")
+                #     logger.info(f"  Batch loss: {loss.item()}")
+                #     first_batch_logged = True
 
                 # Track loss and outputs
                 total_loss += loss.item()

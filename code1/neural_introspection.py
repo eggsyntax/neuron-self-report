@@ -810,7 +810,7 @@ def evaluate_model(
             else:
                 # Original behavior
                 logger.info(f"  Text: {display_text}")
-                logger.info(f"  Raw model output: {raw_pred:.6f}")
+                logger.info(f"  Raw model output: {raw_pred}")
                 logger.info(f"  Denormalized: {denorm_pred:.6f}")
                 logger.info(f"  Actual: {actual:.6f}")
                 logger.info(f"  Error: {denorm_pred-actual:.6f}")

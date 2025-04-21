@@ -471,22 +471,13 @@ class ActivationPredictor(nn.Module):
                     return_type=None,
                 )
                 
-                # This is the critical part where the computational graph gets broken
-                # Instead of extracting from cache directly, we need to extract in a way that preserves gradients
-                
-                # We need to get our feature layer outputs DIRECTLY from the model
-                # First run last token through all transformer layers
-                batch_indices = torch.arange(batch_size, device=input_ids.device)
-                
-                # If self.training, we need a different approach to preserve the gradient path
+                # If in training mode, we need to preserve the computational graph to allow
+                # gradient flow back to model parameters. Using the cache breaks this connection.
                 if self.training:
-                    print("Using direct computation path to preserve gradients")
-                    
-                    # Get the embeddings first
+                    # Get embeddings and run through model maintaining the computation graph
                     with torch.set_grad_enabled(True):
                         # Get embeddings (input to first layer)
                         embeddings = self.base_model.embed(input_ids)
-                        print(f"Embeddings requires_grad: {embeddings.requires_grad}")
                         
                         # Run through each layer up to our target feature layer
                         layer_inputs = embeddings
@@ -508,7 +499,6 @@ class ActivationPredictor(nn.Module):
                                 
                                 # Stack for batch processing
                                 features = torch.stack(features, dim=0)
-                                print(f"Direct features requires_grad: {features.requires_grad}, grad_fn: {features.grad_fn}")
                                 break
                 else:
                     # For inference, we can use the cache approach which is faster
@@ -522,25 +512,8 @@ class ActivationPredictor(nn.Module):
                     # Stack features for batch processing
                     features = torch.stack(features, dim=0)
                 
-                # DEBUG: Check head parameters before running prediction
-                if self.training:
-                    print(f"Head requires_grad status:")
-                    for name, param in self.head.named_parameters():
-                        print(f"  {name}: requires_grad={param.requires_grad}")
-                
                 # Run through prediction head
                 predictions = self.head(features)
-                
-                # DEBUG: Check prediction gradient info
-                if self.training:
-                    print(f"Predictions: requires_grad={predictions.requires_grad}, grad_fn={predictions.grad_fn}")
-                    
-                    # Register backward hook on predictions to capture gradient flow
-                    def grad_hook(grad):
-                        print(f"Prediction gradient in hook: norm={grad.norm().item()}")
-                        return grad
-                        
-                    predictions.register_hook(grad_hook)
             
             # Extract actual activations if requested
             if (return_activations or return_uncertainties) and self.target_layer is not None and self.target_neuron is not None:
@@ -554,12 +527,6 @@ class ActivationPredictor(nn.Module):
                     activations.append(activation)
                     
                 activations = torch.tensor(activations, device=self.device)
-                
-                # DEBUG: Print target neuron and activation information
-                if self.training:
-                    print(f"Target layer: {self.target_layer}, Target neuron: {self.target_neuron}")
-                    print(f"Layer type: {self.layer_type}, Feature layer: {self.feature_layer}")
-                    print(f"Sample activations: {activations[:3]}")
                 
                 # Calculate uncertainties if requested
                 if return_uncertainties:

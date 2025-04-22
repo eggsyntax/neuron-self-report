@@ -1193,7 +1193,7 @@ class PredictorTrainer:
         loss_fn = self._get_loss_function()
 
         # DEBUG: Log beginning of evaluation
-        logger.info(f"DEBUG - Starting evaluation on {split_name} set with {len(data_loader)} batches")
+        # logger.info(f"DEBUG - Starting evaluation on {split_name} set with {len(data_loader)} batches")
 
         # first_batch_logged = False
         with torch.no_grad():

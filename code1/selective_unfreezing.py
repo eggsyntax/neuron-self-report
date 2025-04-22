@@ -216,9 +216,9 @@ def apply_unfreezing_strategy(
     logger.info(f"Unfrozen parameters: {results['unfrozen_params']:,} "
                 f"({results['unfrozen_percentage']:.2f}% of total)")
     
-    print("=== Parameters and their trainable status after unfreezing ===")
-    for name, param in model.named_parameters():
-        print(f"{name}: requires_grad={param.requires_grad}")
+    # print("=== Parameters and their trainable status after unfreezing ===")
+    # for name, param in model.named_parameters():
+    #     print(f"{name}: requires_grad={param.requires_grad}")
 
     return results
 

@@ -1003,7 +1003,9 @@ def archive_existing_output(output_dir: str, force_overwrite: bool = False, args
         data_source_cleaned = data_source.split('_2025')[0]
     
     # Build the directory name with timestamp and formatted performance suffix
-    dir_name = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{data_source_cleaned}-{performance_suffix}-{timestamp}"
+    # Add epochs to the name if different from default (10)
+    epochs_suffix = f"{args.epochs}_epochs-" if args.epochs != 10 else ""
+    dir_name = f"{head_type}-{unfreeze_strategy}-{dataset_size}-{epochs_suffix}{data_source_cleaned}-{performance_suffix}-{timestamp}"
     
     archive_dir = os.path.join(archive_root, dir_name)
     

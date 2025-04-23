@@ -511,16 +511,11 @@ def train_model(
         model.tokenizer,
     )
     
-    # Get activation statistics for scaling
+    # Get bin edges for classification
     if hasattr(dataset, "bin_info") and dataset.bin_info is not None:
         bin_edges = np.array(dataset.bin_info["bin_edges"])
     else:
         bin_edges = None
-    
-    # Get activation mean and std for regression scaling
-    activations = dataset.activations
-    activation_mean = np.mean(activations)
-    activation_std = np.std(activations)
     
     # Create timestamp for output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -556,8 +551,6 @@ def train_model(
         head_config=head_config,
         device=device,
         bin_edges=bin_edges,
-        activation_mean=activation_mean,
-        activation_std=activation_std,
     )
     
     # Create trainer
@@ -656,20 +649,10 @@ def evaluate_model(
     plt.subplot(2, 2, 1)
     xs = test_results["actuals"]
     
-    # Check if we have bias-corrected predictions available
-    has_bias_correction = test_results.get("has_systematic_bias", False)
-    
-    if has_bias_correction and "corrected_predictions" in test_results:
-        # Use bias-corrected predictions for visualization
-        ys = test_results["corrected_predictions"]
-        correlation = test_results["corrected_correlation"]
-        mse = test_results["corrected_mse"]
-        logger.info("Using bias-corrected predictions for introspection analysis")
-    else:
-        # Use original predictions
-        ys = test_results["predictions"]
-        correlation = test_results["correlation"]
-        mse = test_results["mse"]
+    # We're now using raw predictions directly without bias correction
+    ys = test_results["predictions"]
+    correlation = test_results["correlation"]
+    mse = test_results["mse"]
     
     # Convert to numpy arrays
     xs_array = np.array(xs)
@@ -683,7 +666,7 @@ def evaluate_model(
     max_val = max(max(xs_array), max(ys_array))
     plt.plot([min_val, max_val], [min_val, max_val], "r--")
     
-    plt.title(f"Predicted vs. Actual Activations{' (Bias-Corrected)' if has_bias_correction else ''}")
+    plt.title("Predicted vs. Actual Activations")
     plt.xlabel("Actual Activation")
     plt.ylabel("Predicted Activation")
     plt.grid(alpha=0.3)
@@ -733,8 +716,6 @@ def evaluate_model(
         f"Mean Error: {mean_error:.4f}\n"
         f"Error Std: {error_std:.4f}"
     )
-    if has_bias_correction:
-        metrics_text += f"\n(Using bias-corrected predictions)"
     
     plt.figtext(
         0.02, 0.02,
@@ -771,49 +752,23 @@ def evaluate_model(
         else:
             test_sample = texts[:5]
         
-        # Get both raw and processed predictions for comparison
-        # First get denormalized predictions (as they would appear in reports)
-        predictions_denorm, activations = predictor.predict(
+        # Get predictions and actual activations
+        predictions, activations = predictor.predict(
             test_sample,
             return_activations=True,
-            return_raw=False,  # Get denormalized predictions
         )
-        
-        # Then get raw predictions (before denormalization)
-        predictions_raw = predictor.predict(
-            test_sample,
-            return_activations=False,
-            return_raw=True,  # Get raw predictions
-        )
-        
-        # Check if we should apply the same bias correction as in the visualization
-        has_bias_correction = test_results.get("has_systematic_bias", False)
-        mean_error = test_results.get("mean_error", 0) if has_bias_correction else 0
         
         # Display results
-        for i, (text, raw_pred, denorm_pred, actual) in enumerate(zip(test_sample, predictions_raw, predictions_denorm, activations)):
+        for i, (text, pred, actual) in enumerate(zip(test_sample, predictions, activations)):
             logger.info(f"Example {i+1}:")
             # Truncate long texts for display
             display_text = text if len(text) <= 70 else text[:67] + "..."
             
-            # Apply the bias correction to match our visualization
-            if has_bias_correction:
-                # Correct the prediction using the same method as in visualization
-                corrected_pred = denorm_pred - mean_error
-                logger.info(f"  Text: {display_text}")
-                logger.info(f"  Raw model output: {raw_pred}")
-                logger.info(f"  Denormalized: {denorm_pred:.6f}")
-                logger.info(f"  Corrected: {corrected_pred:.6f}")
-                logger.info(f"  Actual: {actual:.6f}")
-                logger.info(f"  Original error: {denorm_pred-actual:.6f}")
-                logger.info(f"  Corrected error: {corrected_pred-actual:.6f}")
-            else:
-                # Original behavior
-                logger.info(f"  Text: {display_text}")
-                logger.info(f"  Raw model output: {raw_pred}")
-                logger.info(f"  Denormalized: {denorm_pred:.6f}")
-                logger.info(f"  Actual: {actual:.6f}")
-                logger.info(f"  Error: {denorm_pred-actual:.6f}")
+            # Show raw prediction values
+            logger.info(f"  Text: {display_text}")
+            logger.info(f"  Prediction: {pred:.6f}")
+            logger.info(f"  Actual: {actual:.6f}")
+            logger.info(f"  Error: {pred-actual:.6f}")
     
     # Generate a detailed report
     report_path = os.path.join(output_dir, f"introspection_report_{timestamp}.txt")
@@ -846,19 +801,11 @@ def evaluate_model(
                                          min(10, len(test_results["actuals"])), 
                                          replace=False)
         
-        # Check if we have bias-corrected predictions
-        has_bias_correction = test_results.get("has_systematic_bias", False) and "corrected_predictions" in test_results
-        
         for i, idx in enumerate(sample_indices):
             actual = test_results["actuals"][idx]
             predicted = test_results["predictions"][idx]
             error = predicted - actual
             text = test_results["texts"][idx]
-            
-            # Include corrected prediction if available
-            if has_bias_correction:
-                corrected = test_results["corrected_predictions"][idx]
-                corrected_error = corrected - actual
             
             # Truncate long texts for display
             display_text = text if len(text) <= 70 else text[:67] + "..."
@@ -867,27 +814,17 @@ def evaluate_model(
             f.write(f"  Text: {display_text}\n")
             f.write(f"  Actual: {actual:.6f}\n")
             f.write(f"  Predicted: {predicted:.6f}\n")
-            
-            if has_bias_correction:
-                f.write(f"  Corrected Prediction: {corrected:.6f}\n")
-                f.write(f"  Original Error: {error:.6f}\n")
-                f.write(f"  Corrected Error: {corrected_error:.6f}\n\n")
-            else:
-                f.write(f"  Error: {error:.6f}\n\n")
+            f.write(f"  Error: {error:.6f}\n\n")
     
     logger.info(f"Introspection report saved to {report_path}")
     
-    # Return combined results
-    # Check if we should use corrected metrics
-    has_bias_correction = test_results.get("has_systematic_bias", False) and "corrected_predictions" in test_results
-    
+    # Return results
     return {
         "test_results": test_results,
         "layer": predictor.target_layer,
         "neuron": predictor.target_neuron,
-        "correlation": test_results["corrected_correlation"] if has_bias_correction else test_results["correlation"],
-        "used_bias_correction": has_bias_correction,
-        "mse": test_results["corrected_mse"] if has_bias_correction else test_results["mse"],
+        "correlation": test_results["correlation"],
+        "mse": test_results["mse"],
         "report_path": report_path,
         "figure_path": figure_path,
     }

@@ -1,0 +1,81 @@
+Neural Introspection Report
+=========================
+
+Target Neuron Information
+------------------------
+Model: gpt2
+Layer: 8
+Neuron: 481
+Layer Type: mlp_out
+Feature Layer: -1
+Head Type: regression
+
+Performance Metrics
+------------------
+Correlation: 0.686256
+MSE: 70.104894
+Mean Error: -8.350185
+Error Std: 0.615871
+
+Sample Predictions (Test Set)
+----------------------------
+Sample 1:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 17.952028
+  Predicted: 9.056953
+  Error: -8.895075
+
+Sample 2:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 17.984734
+  Predicted: 9.037941
+  Error: -8.946793
+
+Sample 3:
+  Text: Scientists study complex patterns in data to discover insights. Thi...
+  Actual: 16.583332
+  Predicted: 8.936684
+  Error: -7.646648
+
+Sample 4:
+  Text: Climate change poses significant challenges for future generations....
+  Actual: 16.775282
+  Predicted: 9.108726
+  Error: -7.666556
+
+Sample 5:
+  Text: Philosophy examines fundamental questions about existence and knowl...
+  Actual: 17.266489
+  Predicted: 9.162903
+  Error: -8.103586
+
+Sample 6:
+  Text: Ocean currents distribute heat around the planet. This represents a...
+  Actual: 17.906553
+  Predicted: 9.146132
+  Error: -8.760421
+
+Sample 7:
+  Text: The human brain contains approximately 86 billion neurons. Continue...
+  Actual: 18.678272
+  Predicted: 9.251012
+  Error: -9.427260
+
+Sample 8:
+  Text: The quick brown fox jumps over the lazy dog. This represents a sign...
+  Actual: 18.588486
+  Predicted: 9.174671
+  Error: -9.413815
+
+Sample 9:
+  Text: Ocean currents distribute heat around the planet. Future developmen...
+  Actual: 17.911823
+  Predicted: 9.201569
+  Error: -8.710255
+
+Sample 10:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 17.971485
+  Predicted: 9.056674
+  Error: -8.914811
+

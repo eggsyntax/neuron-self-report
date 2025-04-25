@@ -1,0 +1,81 @@
+Neural Introspection Report
+=========================
+
+Target Neuron Information
+------------------------
+Model: gpt2
+Layer: 8
+Neuron: 481
+Layer Type: mlp_out
+Feature Layer: -1
+Head Type: regression
+
+Performance Metrics
+------------------
+Correlation: -0.608949
+MSE: 180.058644
+Mean Error: -13.397180
+Error Std: 0.757766
+
+Sample Predictions (Test Set)
+----------------------------
+Sample 1:
+  Text: Deep learning has transformed computer vision tasks. This represent...
+  Actual: 17.410534
+  Predicted: 3.985957
+  Error: -13.424577
+
+Sample 2:
+  Text: Neural networks consist of layers of interconnected nodes. Experts ...
+  Actual: 16.529224
+  Predicted: 3.955057
+  Error: -12.574167
+
+Sample 3:
+  Text: Scientists study complex patterns in data to discover insights. Thi...
+  Actual: 16.583332
+  Predicted: 4.167173
+  Error: -12.416159
+
+Sample 4:
+  Text: Climate change poses significant challenges for future generations....
+  Actual: 16.775282
+  Predicted: 4.089933
+  Error: -12.685349
+
+Sample 5:
+  Text: Philosophy examines fundamental questions about existence and knowl...
+  Actual: 17.266489
+  Predicted: 3.939568
+  Error: -13.326921
+
+Sample 6:
+  Text: Scientists study complex patterns in data to discover insights. The...
+  Actual: 16.565849
+  Predicted: 4.165468
+  Error: -12.400382
+
+Sample 7:
+  Text: The sun rises in the east and sets in the west. Many people find th...
+  Actual: 18.652693
+  Predicted: 3.923285
+  Error: -14.729408
+
+Sample 8:
+  Text: Neural networks consist of layers of interconnected nodes. This has...
+  Actual: 16.486589
+  Predicted: 3.958495
+  Error: -12.528094
+
+Sample 9:
+  Text: Ocean currents distribute heat around the planet. Future developmen...
+  Actual: 17.911823
+  Predicted: 3.929249
+  Error: -13.982575
+
+Sample 10:
+  Text: Neural networks consist of layers of interconnected nodes. Experts ...
+  Actual: 16.529224
+  Predicted: 3.955057
+  Error: -12.574167
+

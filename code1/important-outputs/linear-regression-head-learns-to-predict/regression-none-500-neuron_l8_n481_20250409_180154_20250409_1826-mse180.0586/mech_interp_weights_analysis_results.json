@@ -1,0 +1,12 @@
+{
+  "model_path": "/Users/egg/Documents/ai-safety/Research Projects/neuron_self_report/code1/important-outputs/linear-regression-head-learns-to-predict/regression-none-500-neuron_l8_n481_20250409_180154_20250409_1826-mse180.0586/models/neuron_l8_n481_20250409_180154/best_model",
+  "head_type": "regression",
+  "target_layer": 8,
+  "target_neuron": 481,
+  "sim_with_input": 0.026427166536450386,
+  "sim_with_output": -0.042422808706760406,
+  "random_baseline_mean": -6.630511659443372e-05,
+  "z_score_input": 0.7369197607040405,
+  "z_score_output": -1.178152322769165,
+  "timestamp": "2025-04-23T20:43:41"
+}

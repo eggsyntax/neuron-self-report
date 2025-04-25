@@ -1,0 +1,64 @@
+{
+  "experiment_time": "20250414_164531",
+  "model": "gpt2-small",
+  "target": {
+    "layer": 8,
+    "neuron": 481,
+    "layer_type": "mlp_out",
+    "token_position": "last"
+  },
+  "dataset": {
+    "size": 500,
+    "csv_path": "output/datasets/neuron_l8_n481_20250414_164549.csv",
+    "metadata_path": "output/datasets/neuron_l8_n481_20250414_164549_metadata.json"
+  },
+  "training": {
+    "head_type": "regression",
+    "feature_layer": -1,
+    "batch_size": 16,
+    "epochs": 10,
+    "learning_rate": 0.0001,
+    "early_stopping": true,
+    "unfreeze_strategy": "all",
+    "unfreeze_from": null,
+    "unfreeze_components": "",
+    "track_gradients": false,
+    "track_activations": true
+  },
+  "results": {
+    "correlation": 0.5924776814897799,
+    "mse": 127.25942196850626,
+    "report_path": "output/introspection_report_20250414_173913.txt",
+    "figure_path": "output/figures/introspection_analysis_l8_n481_20250414_173913.png"
+  },
+  "performance_summary": {
+    "correlation": 0.5925,
+    "mse": 127.2594,
+    "directory_name_format": "regression-all-500-generated-mse127.26",
+    "training_time_seconds": 3145.6478531360626,
+    "best_epoch": 7,
+    "mse_improvement": 25.674999237060547,
+    "mse_improvement_pct": 71.3499984741211,
+    "final_r2": 0.3677999973297119
+  },
+  "monitoring": {
+    "activation_analysis": {
+      "plots": [
+        "output/models/neuron_l8_n481_20250414_164549/activation_analysis/initial_activation_dist.png",
+        "output/models/neuron_l8_n481_20250414_164549/activation_analysis/final_activation_dist.png",
+        "output/models/neuron_l8_n481_20250414_164549/activation_analysis/activation_distribution_change.png",
+        "output/models/neuron_l8_n481_20250414_164549/activation_analysis/activation_evolution.png"
+      ],
+      "data": "output/models/neuron_l8_n481_20250414_164549/activation_analysis/activation_data.json",
+      "statistics": {
+        "kl_divergence": 20.322750402099928,
+        "initial_mean": 16.790656910896303,
+        "initial_std": 3.7339721988660317,
+        "final_mean": 5.597152400970459,
+        "final_std": 0.4410083464587339,
+        "mean_shift": -11.193504509925845,
+        "std_change_pct": -88.18929753701264
+      }
+    }
+  }
+}

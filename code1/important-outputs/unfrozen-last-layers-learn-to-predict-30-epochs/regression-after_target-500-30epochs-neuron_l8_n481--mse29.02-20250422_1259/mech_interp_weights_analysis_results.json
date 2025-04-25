@@ -1,0 +1,12 @@
+{
+  "model_path": "/Users/egg/Documents/ai-safety/Research Projects/neuron_self_report/code1/important-outputs/unfrozen-last-layers-learn-to-predict-30-epochs/regression-after_target-500-30epochs-neuron_l8_n481--mse29.02-20250422_1259/models/neuron_l8_n481_20250422_120142/best_model",
+  "head_type": "regression",
+  "target_layer": 8,
+  "target_neuron": 481,
+  "sim_with_input": 0.045291103422641754,
+  "sim_with_output": -0.03094005584716797,
+  "random_baseline_mean": 0.0005822937702578184,
+  "z_score_input": 1.232842206954956,
+  "z_score_output": -0.8692264556884766,
+  "timestamp": "2025-04-23T21:01:03"
+}

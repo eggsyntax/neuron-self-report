@@ -1,0 +1,76 @@
+text,actual,predicted,error
+"Mathematics provides tools for modeling physical phenomena. Research in this area is ongoing.",5.915438,17.263987,11.348549
+"The human brain contains approximately 86 billion neurons. Continued progress is expected in this field.",5.918295,17.215494,11.297199
+"The sun rises in the east and sets in the west. Many people find this interesting.",5.866231,17.162952,11.296721
+"Language models can generate coherent text passages. The underlying principles are widely applicable.",5.910121,17.165230,11.255109
+"Neural networks consist of layers of interconnected nodes. This idea continues to evolve.",5.905859,17.250053,11.344195
+"Ocean currents distribute heat around the planet. Future developments may change our understanding.",5.929093,17.123573,11.194480
+"Neural networks consist of layers of interconnected nodes. This represents a significant advancement.",5.901978,17.172749,11.270771
+"Renewable energy sources include solar, wind, and hydroelectric power. Many people find this interesting.",5.913281,17.156679,11.243398
+"Neural networks consist of layers of interconnected nodes. This idea continues to evolve.",5.905859,17.250053,11.344195
+"Language models can generate coherent text passages. Experts continue to debate this topic.",5.911569,17.197557,11.285989
+"The sun rises in the east and sets in the west. Many people find this interesting.",5.866231,17.162952,11.296721
+"Climate change poses significant challenges for future generations. The underlying principles are widely applicable.",5.943806,17.168709,11.224903
+"Mathematics provides tools for modeling physical phenomena. Experts continue to debate this topic.",5.922010,17.261957,11.339947
+"Philosophy examines fundamental questions about existence and knowledge. The underlying principles are widely applicable.",5.929026,17.249786,11.320761
+"Neural networks consist of layers of interconnected nodes. This has important implications.",5.918226,17.230204,11.311977
+"In machine learning, models are trained on data to make predictions. This is a key concept to understand.",5.895708,17.264576,11.368868
+"Artificial intelligence systems continue to advance rapidly. This idea continues to evolve.",5.890955,17.179552,11.288597
+"Ocean currents distribute heat around the planet. The implications are far-reaching.",5.908713,17.160011,11.251298
+"Scientists study complex patterns in data to discover insights. This concept has practical applications.",5.933828,17.250999,11.317172
+"Medical research continues to develop new treatments for diseases. The implications are far-reaching.",5.923256,17.149181,11.225925
+"Philosophy examines fundamental questions about existence and knowledge. This is a key concept to understand.",5.921887,17.273991,11.352104
+"Philosophy examines fundamental questions about existence and knowledge. Continued progress is expected in this field.",5.930807,17.275240,11.344433
+"Artificial intelligence systems continue to advance rapidly. The underlying principles are widely applicable.",5.880408,17.094425,11.214017
+"Philosophy examines fundamental questions about existence and knowledge. Historical context helps explain this phenomenon.",5.951614,17.305935,11.354321
+"Scientists study complex patterns in data to discover insights. The underlying principles are widely applicable.",5.913089,17.198822,11.285733
+"Medical research continues to develop new treatments for diseases. This approach has gained widespread adoption.",5.917791,17.156422,11.238630
+"Deep learning has transformed computer vision tasks. Future developments may change our understanding.",5.973605,17.240606,11.267001
+"Neural networks consist of layers of interconnected nodes. The underlying principles are widely applicable.",5.899683,17.186525,11.286843
+"Neural networks consist of layers of interconnected nodes. Research in this area is ongoing.",5.893420,17.209515,11.316095
+"Climate change poses significant challenges for future generations. Future developments may change our understanding.",5.986028,17.179169,11.193141
+"The internet has revolutionized how people access information. This is fascinating.",5.928424,17.288860,11.360436
+"Scientists study complex patterns in data to discover insights. This concept has practical applications.",5.933828,17.250999,11.317172
+"Climate change poses significant challenges for future generations. This idea continues to evolve.",5.954253,17.248070,11.293817
+"Medical research continues to develop new treatments for diseases. The implications are far-reaching.",5.923256,17.149181,11.225925
+"Forests are crucial ecosystems that support biodiversity. Future developments may change our understanding.",5.929605,17.150801,11.221196
+"The quick brown fox jumps over the lazy dog. Continued progress is expected in this field.",5.878255,17.033482,11.155227
+"Scientists study complex patterns in data to discover insights. The implications are far-reaching.",5.932243,17.245193,11.312950
+"Transformers use attention mechanisms to process sequences. Experts continue to debate this topic.",5.901665,17.191299,11.289635
+"Neural networks consist of layers of interconnected nodes. Many people find this interesting.",5.900309,17.248493,11.348185
+"Deep learning has transformed computer vision tasks. Historical context helps explain this phenomenon.",5.957232,17.286713,11.329481
+"The quick brown fox jumps over the lazy dog. The underlying principles are widely applicable.",5.873471,17.015694,11.142222
+"The internet has revolutionized how people access information. Experts continue to debate this topic.",5.919464,17.223726,11.304262
+"Renewable energy sources include solar, wind, and hydroelectric power. Future developments may change our understanding.",5.936904,17.095308,11.158404
+"Deep learning has transformed computer vision tasks. This approach has gained widespread adoption.",5.943240,17.287964,11.344724
+"Mathematics provides tools for modeling physical phenomena. This represents a significant advancement.",5.924696,17.230574,11.305878
+"The quick brown fox jumps over the lazy dog. This represents a significant advancement.",5.882310,17.013065,11.130755
+"Medical research continues to develop new treatments for diseases. This represents a significant advancement.",5.911577,17.084698,11.173121
+"Mathematics provides tools for modeling physical phenomena. This concept has practical applications.",5.941156,17.296326,11.355170
+"Scientists study complex patterns in data to discover insights. This is a key concept to understand.",5.907455,17.221731,11.314276
+"Ocean currents distribute heat around the planet. This represents a significant advancement.",5.894293,17.112753,11.218460
+"Philosophy examines fundamental questions about existence and knowledge. This concept has practical applications.",5.949744,17.310600,11.360856
+"Language models can generate coherent text passages. Experts continue to debate this topic.",5.911569,17.197557,11.285989
+"Neural networks consist of layers of interconnected nodes. Historical context helps explain this phenomenon.",5.921646,17.237383,11.315737
+"Language models can generate coherent text passages. Research in this area is ongoing.",5.903520,17.193092,11.289573
+"The sun rises in the east and sets in the west. This approach has gained widespread adoption.",5.872760,17.140947,11.268188
+"Deep learning has transformed computer vision tasks. Future developments may change our understanding.",5.973605,17.240606,11.267001
+"The quick brown fox jumps over the lazy dog. Historical context helps explain this phenomenon.",5.899140,17.078590,11.179450
+"Climate change poses significant challenges for future generations. The implications are far-reaching.",5.965959,17.223640,11.257682
+"Transformers use attention mechanisms to process sequences. The implications are far-reaching.",5.917978,17.204353,11.286375
+"Language models can generate coherent text passages. Research in this area is ongoing.",5.903520,17.193092,11.289573
+"Mathematics provides tools for modeling physical phenomena. This approach has gained widespread adoption.",5.933783,17.294643,11.360860
+"The quick brown fox jumps over the lazy dog. Experts continue to debate this topic.",5.878891,17.045652,11.166761
+"In machine learning, models are trained on data to make predictions. The underlying principles are widely applicable.",5.900599,17.237055,11.336456
+"Medical research continues to develop new treatments for diseases. This is a key concept to understand.",5.897299,17.110672,11.213373
+"Language models can generate coherent text passages. The implications are far-reaching.",5.929291,17.205862,11.276571
+"Deep learning has transformed computer vision tasks. Historical context helps explain this phenomenon.",5.957232,17.286713,11.329481
+"Researchers work to make AI more interpretable and transparent. Many people find this interesting.",5.940951,17.303185,11.362234
+"Mathematics provides tools for modeling physical phenomena. The implications are far-reaching.",5.937424,17.282272,11.344848
+"Researchers work to make AI more interpretable and transparent. The underlying principles are widely applicable.",5.935941,17.221973,11.286033
+"Medical research continues to develop new treatments for diseases. Many people find this interesting.",5.908581,17.164223,11.255641
+"Deep learning has transformed computer vision tasks. The underlying principles are widely applicable.",5.930951,17.227493,11.296542
+"In machine learning, models are trained on data to make predictions. This has important implications.",5.916280,17.293524,11.377244
+"Artificial intelligence systems continue to advance rapidly. Research in this area is ongoing.",5.877041,17.123676,11.246635
+"Artificial intelligence systems continue to advance rapidly. This is a key concept to understand.",5.873562,17.122736,11.249174
+"The quick brown fox jumps over the lazy dog. The implications are far-reaching.",5.894075,17.068871,11.174795

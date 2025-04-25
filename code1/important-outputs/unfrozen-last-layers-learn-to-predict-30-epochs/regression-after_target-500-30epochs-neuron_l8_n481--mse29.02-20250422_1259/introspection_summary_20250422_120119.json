@@ -1,0 +1,44 @@
+{
+  "experiment_time": "20250422_120119",
+  "model": "gpt2-small",
+  "target": {
+    "layer": 8,
+    "neuron": 481,
+    "layer_type": "mlp_out",
+    "token_position": "last"
+  },
+  "dataset": {
+    "size": 500,
+    "csv_path": "output/datasets/neuron_l8_n481_20250422_120142.csv",
+    "metadata_path": "output/datasets/neuron_l8_n481_20250422_120142_metadata.json"
+  },
+  "training": {
+    "head_type": "regression",
+    "feature_layer": -1,
+    "batch_size": 16,
+    "epochs": 30,
+    "learning_rate": 0.0001,
+    "early_stopping": true,
+    "unfreeze_strategy": "after_target",
+    "unfreeze_from": null,
+    "unfreeze_components": "",
+    "track_gradients": false,
+    "track_activations": false
+  },
+  "results": {
+    "correlation": 0.7583767825819218,
+    "mse": 29.015352359240143,
+    "report_path": "output/introspection_report_20250422_121443.txt",
+    "figure_path": "output/figures/introspection_analysis_l8_n481_20250422_121443.png"
+  },
+  "performance_summary": {
+    "correlation": 0.7584,
+    "mse": 29.0154,
+    "directory_name_format": "regression-after_target-500-generated-mse29.02",
+    "training_time_seconds": 775.6276159286499,
+    "best_epoch": 22,
+    "mse_improvement": 184.2689971923828,
+    "mse_improvement_pct": 63.459999084472656,
+    "final_r2": -5.582099914550781
+  }
+}

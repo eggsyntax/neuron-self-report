@@ -4,11 +4,11 @@
 code1/.envrc
 code1/.vscode/*
 code1/package-lock.json
-code1/important-outputs
 code1/output
 code1/output-archive
 code1/integration_test_output
 code1/test_predictor_output
+code1/mech_interp/notebooks/*.png
 /code1/CLAUDE.md
 
 **/CLAUDE.local.md

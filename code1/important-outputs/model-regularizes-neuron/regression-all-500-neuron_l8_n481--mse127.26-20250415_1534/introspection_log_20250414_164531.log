@@ -1,0 +1,63 @@
+2025-04-14 16:45:31,161 - neural_introspection - INFO - Neural introspection pipeline started
+2025-04-14 16:45:31,161 - neural_introspection - INFO - Output directory: output
+2025-04-14 16:45:31,179 - neural_introspection - INFO - Using device: mps
+2025-04-14 16:45:31,182 - neural_introspection - INFO - Loading model: gpt2-small
+2025-04-14 16:45:32,783 - neural_introspection - INFO - Model architecture: gpt2-small
+2025-04-14 16:45:32,783 - neural_introspection - INFO -   Layers: 12
+2025-04-14 16:45:32,783 - neural_introspection - INFO -   Hidden size: 768
+2025-04-14 16:45:32,783 - neural_introspection - INFO -   MLP intermediate size: 3072
+2025-04-14 16:45:32,783 - neural_introspection - INFO - No text file provided or file not found. Generating 400 synthetic texts
+2025-04-14 16:45:32,790 - neural_introspection - INFO - Loaded 400 sample texts
+2025-04-14 16:45:32,790 - neural_introspection - INFO - Using specified neuron: Layer 8, Neuron 481
+2025-04-14 16:45:32,790 - neural_introspection - INFO - Generating regression dataset for Layer 8, Neuron 481
+2025-04-14 16:45:49,514 - neural_introspection - INFO - Dataset saved to output/datasets/neuron_l8_n481_20250414_164549
+2025-04-14 16:45:49,514 - neural_introspection - INFO -   Samples: 500
+2025-04-14 16:45:49,514 - neural_introspection - INFO -   Activation range: [5.1048, 25.0682]
+2025-04-14 16:45:49,514 - neural_introspection - INFO -   Mean: 16.7907, Std: 3.7340
+2025-04-14 16:45:49,714 - neural_introspection - INFO - Training gpt2 to predict Layer 8, Neuron 481 activations
+2025-04-14 16:45:49,714 - neural_introspection - INFO -   Using regression head
+2025-04-14 16:45:49,714 - neural_introspection - INFO -   Features from layer: -1
+2025-04-14 17:39:08,472 - neural_introspection - INFO - Training completed in 3145.6 seconds
+2025-04-14 17:39:08,473 - neural_introspection - INFO -   Final training loss: 3.6642
+2025-04-14 17:39:08,473 - neural_introspection - INFO -   Final validation loss: 10.7857
+2025-04-14 17:39:08,473 - neural_introspection - INFO -   Best validation loss: 7.7007 (epoch 7)
+2025-04-14 17:39:08,506 - neural_introspection - INFO - Loaded best model from epoch 7
+2025-04-14 17:39:08,506 - neural_introspection - INFO - Evaluating model performance
+2025-04-14 17:39:13,119 - neural_introspection - INFO - Test set evaluation:
+2025-04-14 17:39:13,119 - neural_introspection - INFO -   Correlation: 0.5925
+2025-04-14 17:39:13,119 - neural_introspection - INFO -   MSE: 127.2594
+2025-04-14 17:39:13,505 - neural_introspection - INFO - Introspection analysis visualization saved to output/figures/introspection_analysis_l8_n481_20250414_173913.png
+2025-04-14 17:39:13,506 - neural_introspection - INFO - Testing on new examples:
+2025-04-14 17:39:13,832 - neural_introspection - INFO - Example 1:
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Text: Scientists study complex patterns in data to discover insights. Thi...
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Raw model output: 18.982925
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Denormalized: 18.982925
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Actual: 4.930034
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Error: 14.052891
+2025-04-14 17:39:13,833 - neural_introspection - INFO - Example 2:
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Text: Artificial intelligence systems continue to advance rapidly. This i...
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Raw model output: 21.119156
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Denormalized: 21.119156
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Actual: 4.852987
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Error: 16.266169
+2025-04-14 17:39:13,833 - neural_introspection - INFO - Example 3:
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Text: Transformers use attention mechanisms to process sequences. This ap...
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Raw model output: 22.769325
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Denormalized: 22.769325
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Actual: 5.577851
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Error: 17.191475
+2025-04-14 17:39:13,833 - neural_introspection - INFO - Example 4:
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Text: Ocean currents distribute heat around the planet. This has importan...
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Raw model output: 17.772127
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Denormalized: 17.772127
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Actual: 5.556185
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Error: 12.215942
+2025-04-14 17:39:13,833 - neural_introspection - INFO - Example 5:
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Text: Deep learning has transformed computer vision tasks. Many people fi...
+2025-04-14 17:39:13,833 - neural_introspection - INFO -   Raw model output: 21.024525
+2025-04-14 17:39:13,834 - neural_introspection - INFO -   Denormalized: 21.024525
+2025-04-14 17:39:13,834 - neural_introspection - INFO -   Actual: 6.207384
+2025-04-14 17:39:13,834 - neural_introspection - INFO -   Error: 14.817141
+2025-04-14 17:39:13,834 - neural_introspection - INFO - Introspection report saved to output/introspection_report_20250414_173913.txt
+2025-04-14 17:39:13,835 - neural_introspection - INFO - Summary saved to output/introspection_summary_20250414_164531.json
+2025-04-14 17:39:13,835 - neural_introspection - INFO - Neural introspection pipeline completed successfully!

@@ -1,0 +1,81 @@
+Neural Introspection Report
+=========================
+
+Target Neuron Information
+------------------------
+Model: gpt2
+Layer: 8
+Neuron: 481
+Layer Type: mlp_out
+Feature Layer: -1
+Head Type: regression
+
+Performance Metrics
+------------------
+Correlation: 0.758377
+MSE: 29.015352
+Mean Error: -5.350156
+Error Std: 0.625446
+
+Sample Predictions (Test Set)
+----------------------------
+Sample 1:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 17.952028
+  Predicted: 12.091022
+  Error: -5.861006
+
+Sample 2:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 17.984734
+  Predicted: 12.074762
+  Error: -5.909971
+
+Sample 3:
+  Text: Scientists study complex patterns in data to discover insights. Thi...
+  Actual: 16.583332
+  Predicted: 11.990047
+  Error: -4.593285
+
+Sample 4:
+  Text: Renewable energy sources include solar, wind, and hydroelectric pow...
+  Actual: 16.980648
+  Predicted: 11.994905
+  Error: -4.985743
+
+Sample 5:
+  Text: Transformers use attention mechanisms to process sequences. This co...
+  Actual: 16.721096
+  Predicted: 12.106283
+  Error: -4.614813
+
+Sample 6:
+  Text: Ocean currents distribute heat around the planet. This represents a...
+  Actual: 17.906553
+  Predicted: 12.154055
+  Error: -5.752499
+
+Sample 7:
+  Text: The human brain contains approximately 86 billion neurons. Continue...
+  Actual: 18.678272
+  Predicted: 12.273848
+  Error: -6.404425
+
+Sample 8:
+  Text: The quick brown fox jumps over the lazy dog. This represents a sign...
+  Actual: 18.588486
+  Predicted: 12.217113
+  Error: -6.371372
+
+Sample 9:
+  Text: The sun rises in the east and sets in the west. This is a key conce...
+  Actual: 18.601635
+  Predicted: 12.129128
+  Error: -6.472507
+
+Sample 10:
+  Text: Medical research continues to develop new treatments for diseases. ...
+  Actual: 17.971485
+  Predicted: 12.091116
+  Error: -5.880369
+

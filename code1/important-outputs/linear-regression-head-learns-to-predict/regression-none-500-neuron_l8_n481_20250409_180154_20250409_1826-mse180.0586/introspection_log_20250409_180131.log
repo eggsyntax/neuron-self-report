@@ -1,0 +1,67 @@
+2025-04-09 18:01:31,707 - neural_introspection - INFO - Neural introspection pipeline started
+2025-04-09 18:01:31,707 - neural_introspection - INFO - Output directory: output
+2025-04-09 18:01:31,718 - neural_introspection - INFO - Using device: mps
+2025-04-09 18:01:31,720 - neural_introspection - INFO - Loading model: gpt2-small
+2025-04-09 18:01:35,187 - neural_introspection - INFO - Model architecture: gpt2-small
+2025-04-09 18:01:35,187 - neural_introspection - INFO -   Layers: 12
+2025-04-09 18:01:35,187 - neural_introspection - INFO -   Hidden size: 768
+2025-04-09 18:01:35,188 - neural_introspection - INFO -   MLP intermediate size: 3072
+2025-04-09 18:01:35,188 - neural_introspection - INFO - No text file provided or file not found. Generating 100 synthetic texts
+2025-04-09 18:01:35,189 - neural_introspection - INFO - Loaded 100 sample texts
+2025-04-09 18:01:35,189 - neural_introspection - INFO - Scanning for interesting neurons using 100 sample texts
+2025-04-09 18:01:36,394 - neural_introspection - INFO - Using top neuron from layers up to 8
+2025-04-09 18:01:36,394 - neural_introspection - INFO - Selected neuron: Layer 8, Neuron 481
+2025-04-09 18:01:36,394 - neural_introspection - INFO -   Score: 48.2056, Variance: 15.9491, Range: 19.5418
+2025-04-09 18:01:39,904 - neural_introspection - INFO - Neuron visualization saved to output/figures
+2025-04-09 18:01:39,905 - neural_introspection - INFO - Generating regression dataset for Layer 8, Neuron 481
+2025-04-09 18:01:54,407 - neural_introspection - INFO - Dataset saved to output/datasets/neuron_l8_n481_20250409_180154
+2025-04-09 18:01:54,407 - neural_introspection - INFO -   Samples: 500
+2025-04-09 18:01:54,407 - neural_introspection - INFO -   Activation range: [5.1048, 24.6465]
+2025-04-09 18:01:54,407 - neural_introspection - INFO -   Mean: 16.5951, Std: 3.9736
+2025-04-09 18:01:54,487 - neural_introspection - INFO - Training gpt2 to predict Layer 8, Neuron 481 activations
+2025-04-09 18:01:54,487 - neural_introspection - INFO -   Using regression head
+2025-04-09 18:01:54,487 - neural_introspection - INFO -   Features from layer: -1
+2025-04-09 18:04:48,320 - neural_introspection - INFO - Training completed in 171.9 seconds
+2025-04-09 18:04:48,321 - neural_introspection - INFO -   Final training loss: 3.8847
+2025-04-09 18:04:48,321 - neural_introspection - INFO -   Final validation loss: 3.9000
+2025-04-09 18:04:48,321 - neural_introspection - INFO -   Best validation loss: 3.9000 (epoch 10)
+2025-04-09 18:04:48,330 - neural_introspection - INFO - Loaded best model from epoch 10
+2025-04-09 18:04:48,331 - neural_introspection - INFO - Evaluating model performance
+2025-04-09 18:04:51,129 - neural_introspection - INFO - Test set evaluation:
+2025-04-09 18:04:51,129 - neural_introspection - INFO -   Correlation: -0.6089
+2025-04-09 18:04:51,129 - neural_introspection - INFO -   MSE: 180.0586
+2025-04-09 18:04:51,517 - neural_introspection - INFO - Introspection analysis visualization saved to output/figures/introspection_analysis_l8_n481_20250409_180451.png
+2025-04-09 18:04:51,517 - neural_introspection - INFO - Testing on new examples:
+2025-04-09 18:04:51,671 - neural_introspection - INFO - Example 1:
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Text: Scientists study complex patterns in data to discover insights. Thi...
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Raw model output: 16.953962
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Denormalized: 16.953962
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Actual: 17.541592
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Error: -0.587629
+2025-04-09 18:04:51,671 - neural_introspection - INFO - Example 2:
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Text: Artificial intelligence systems continue to advance rapidly. This c...
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Raw model output: 15.458429
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Denormalized: 15.458429
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Actual: 14.699523
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Error: 0.758906
+2025-04-09 18:04:51,671 - neural_introspection - INFO - Example 3:
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Text: Deep learning has transformed computer vision tasks. This represent...
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Raw model output: 18.631844
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Denormalized: 18.631844
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Actual: 18.038258
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Error: 0.593586
+2025-04-09 18:04:51,671 - neural_introspection - INFO - Example 4:
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Text: Ocean currents distribute heat around the planet. This approach has...
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Raw model output: 19.998619
+2025-04-09 18:04:51,671 - neural_introspection - INFO -   Denormalized: 19.998619
+2025-04-09 18:04:51,672 - neural_introspection - INFO -   Actual: 21.982956
+2025-04-09 18:04:51,672 - neural_introspection - INFO -   Error: -1.984337
+2025-04-09 18:04:51,672 - neural_introspection - INFO - Example 5:
+2025-04-09 18:04:51,672 - neural_introspection - INFO -   Text: Artificial intelligence systems continue to advance rapidly. This i...
+2025-04-09 18:04:51,672 - neural_introspection - INFO -   Raw model output: 19.329969
+2025-04-09 18:04:51,672 - neural_introspection - INFO -   Denormalized: 19.329969
+2025-04-09 18:04:51,672 - neural_introspection - INFO -   Actual: 19.864332
+2025-04-09 18:04:51,672 - neural_introspection - INFO -   Error: -0.534363
+2025-04-09 18:04:51,672 - neural_introspection - INFO - Introspection report saved to output/introspection_report_20250409_180451.txt
+2025-04-09 18:04:51,673 - neural_introspection - INFO - Summary saved to output/introspection_summary_20250409_180131.json
+2025-04-09 18:04:51,673 - neural_introspection - INFO - Neural introspection pipeline completed successfully!

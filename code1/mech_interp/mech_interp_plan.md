@@ -619,17 +619,29 @@ def create_patching_hook(neuron_idx, new_value, patch_type="set"):
         # Create a copy to avoid modifying the original
         patched = activation.clone()
         
-        # Apply patching to the target neuron for all positions
-        if patch_type == "set":
-            # Set to constant value
-            patched[:, :, neuron_idx] = new_value
-        elif patch_type == "scale":
-            # Scale by factor
-            patched[:, :, neuron_idx] = activation[:, :, neuron_idx] * new_value
-        elif patch_type == "zero":
-            # Set to zero
-            patched[:, :, neuron_idx] = 0.0
-        
+        # Apply patching to the target neuron for all positions or just the last token
+        # We'll patch only the last token to match how we're extracting features
+        if hook.n_pos is not None:  # If we have position information
+            for i in range(batch_size):
+                pos = hook.n_pos[i]
+                if patch_type == "set":
+                    # Set to constant value
+                    patched[i, pos, neuron_idx] = new_value
+                elif patch_type == "scale":
+                    # Scale by factor
+                    patched[i, pos, neuron_idx] = activation[i, pos, neuron_idx] * new_value
+                elif patch_type == "zero":
+                    # Set to zero
+                    patched[i, pos, neuron_idx] = 0.0
+        else:  # If we don't have position info, assume last token
+            # This is simpler but maybe less precise
+            if patch_type == "set":
+                patched[:, -1, neuron_idx] = new_value
+            elif patch_type == "scale":
+                patched[:, -1, neuron_idx] = activation[:, -1, neuron_idx] * new_value
+            elif patch_type == "zero":
+                patched[:, -1, neuron_idx] = 0.0
+                
         return patched
     
     return hook_fn
@@ -698,8 +710,19 @@ def run_patching_experiment(patch_value, patch_type="set"):
         input_ids = inputs["input_ids"]
         attention_mask = inputs["attention_mask"] if "attention_mask" in inputs else None
         
+        # Get last token position for hook context
+        last_pos = int((attention_mask.sum(-1) - 1)[0]) if attention_mask is not None else -1
+        
+        # Create a hook context object to pass to the hook
+        class HookContext:
+            def __init__(self, positions):
+                self.n_pos = positions
+                
+        hook_context = HookContext([last_pos])  # Pass position info to hook
+        
         # Run with patching hook
-        with base_model.hooks([(f"{layer_type}.{target_layer}", hook_fn)]):
+        hook_name = f"{layer_type}.{target_layer}"
+        with base_model.hooks([(hook_name, hook_fn)]):
             # Get patched activation
             patched_activation = get_neuron_activation(
                 input_ids, 
@@ -774,26 +797,55 @@ for factor in scale_factors:
     print(f"  Avg Prediction Change: {avg_pred_change:.4f}")
 ```
 
-### Visualize Results (3-4 cells)
+### Visualize Results (5-6 cells)
 ```python
 # Visualize scaling experiment results
-plt.figure(figsize=(10, 6))
+plt.figure(figsize=(12, 6))
 
 # Plot activation changes
 act_changes = [r["avg_act_change"] for r in scaling_results]
 pred_changes = [r["avg_pred_change"] for r in scaling_results]
 factors = [r["factor"] for r in scaling_results]
 
+plt.subplot(1, 2, 1)
 plt.plot(factors, act_changes, 'b-o', label='Activation Change')
 plt.plot(factors, pred_changes, 'r-o', label='Prediction Change')
 plt.axhline(y=0, color='k', linestyle='--', alpha=0.3)
 plt.axvline(x=1.0, color='k', linestyle='--', alpha=0.3)
 
-plt.title(f'Effect of Scaling Neuron {target_neuron} in Layer {target_layer}')
+plt.title(f'Effect of Scaling Neuron {target_neuron}')
 plt.xlabel('Scaling Factor')
 plt.ylabel('Change from Baseline')
 plt.legend()
 plt.grid(alpha=0.3)
+
+# Plot changes in predicted vs. actual space
+plt.subplot(1, 2, 2)
+# Get baseline means
+baseline_act_mean = np.mean(baseline_activations)
+baseline_pred_mean = np.mean(baseline_predictions)
+
+# Calculate projected values after scaling
+scaled_acts = [baseline_act_mean + change for change in act_changes]
+scaled_preds = [baseline_pred_mean + change for change in pred_changes]
+
+# Plot with connecting lines in activation-prediction space
+plt.plot(scaled_acts, scaled_preds, 'g-o')
+plt.plot([baseline_act_mean], [baseline_pred_mean], 'ko', markersize=10, label='Baseline (factor=1.0)')
+
+# Add labels for scaling factors
+for i, factor in enumerate(factors):
+    plt.annotate(f"{factor:.2f}", 
+                 (scaled_acts[i], scaled_preds[i]),
+                 xytext=(5, 5), textcoords='offset points')
+
+plt.title('Activation-Prediction Space')
+plt.xlabel('Average Activation')
+plt.ylabel('Average Prediction')
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.tight_layout()
 plt.savefig('scaling_experiment.png')
 plt.show()
 ```
@@ -804,15 +856,17 @@ pred_vs_act = []
 for result in scaling_results:
     for sample in result["results"]:
         pred_vs_act.append({
+            "input": sample["input"],
             "act_change": sample["activation_change"],
             "pred_change": sample["prediction_change"],
             "factor": result["factor"]
         })
 
 # Plot prediction change vs activation change
-plt.figure(figsize=(10, 6))
+plt.figure(figsize=(10, 8))
 colors = plt.cm.viridis(np.linspace(0, 1, len(scale_factors)))
 
+# Create a plot with all individual points
 for i, factor in enumerate(scale_factors):
     # Get points for this scaling factor
     points = [p for p in pred_vs_act if p["factor"] == factor]
@@ -821,17 +875,137 @@ for i, factor in enumerate(scale_factors):
         [p["pred_change"] for p in points],
         label=f'Scale={factor}',
         color=colors[i],
-        alpha=0.7
+        alpha=0.7,
+        s=50
     )
 
 plt.axhline(y=0, color='k', linestyle='--', alpha=0.3)
 plt.axvline(x=0, color='k', linestyle='--', alpha=0.3)
-plt.title('Prediction Change vs Activation Change')
+plt.title('Prediction Change vs Activation Change\nAll Inputs and Scaling Factors')
 plt.xlabel('Activation Change')
 plt.ylabel('Prediction Change')
-plt.legend()
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.grid(alpha=0.3)
-plt.savefig('pred_vs_act_change.png')
+plt.tight_layout()
+plt.savefig('pred_vs_act_change_all.png')
+plt.show()
+```
+
+```python
+# Fit a linear model to quantify the relationship
+from sklearn.linear_model import LinearRegression
+
+# Prepare data
+X = np.array([p["act_change"] for p in pred_vs_act]).reshape(-1, 1)
+y = np.array([p["pred_change"] for p in pred_vs_act])
+
+# Fit model
+model = LinearRegression()
+model.fit(X, y)
+
+# Calculate R² score
+r2 = model.score(X, y)
+slope = model.coef_[0]
+intercept = model.intercept_
+
+# Plot the data with regression line
+plt.figure(figsize=(10, 7))
+plt.scatter(X, y, alpha=0.6)
+plt.plot(
+    [X.min(), X.max()], 
+    [model.predict([[X.min()]])[0], model.predict([[X.max()]])[0]], 
+    'r-', linewidth=2
+)
+
+plt.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+plt.axvline(x=0, color='k', linestyle='--', alpha=0.3)
+plt.title(f'Linear Relationship between Activation and Prediction Changes\nSlope: {slope:.4f}, R²: {r2:.4f}')
+plt.xlabel('Activation Change')
+plt.ylabel('Prediction Change')
+plt.grid(alpha=0.3)
+
+# Add equation on the plot
+equation = f"y = {slope:.4f}x + {intercept:.4f}"
+plt.annotate(equation, xy=(0.05, 0.95), xycoords='axes fraction', 
+             backgroundcolor='white', fontsize=12)
+
+plt.savefig('pred_vs_act_regression.png')
+plt.show()
+
+# Print out the relationship summary
+print(f"Linear Relationship Summary:")
+print(f"  Slope: {slope:.6f}")
+print(f"  Intercept: {intercept:.6f}")
+print(f"  R² coefficient: {r2:.6f}")
+print(f"  Equation: Prediction Change = {slope:.4f} × Activation Change + {intercept:.4f}")
+```
+
+```python
+# Per-input analysis to see which inputs are most affected
+per_input_sensitivity = {}
+
+# Organize data by input
+for inp in test_inputs:
+    points = [p for p in pred_vs_act if p["input"] == inp]
+    
+    if len(points) >= 2:  # Need at least 2 points for regression
+        X_inp = np.array([p["act_change"] for p in points]).reshape(-1, 1)
+        y_inp = np.array([p["pred_change"] for p in points])
+        
+        # Fit individual model
+        inp_model = LinearRegression()
+        inp_model.fit(X_inp, y_inp)
+        
+        # Store results
+        per_input_sensitivity[inp] = {
+            "slope": float(inp_model.coef_[0]),
+            "r2": inp_model.score(X_inp, y_inp),
+            "points": len(points),
+            "X": X_inp.flatten().tolist(),
+            "y": y_inp.tolist()
+        }
+
+# Sort inputs by sensitivity (slope)
+sorted_inputs = sorted(per_input_sensitivity.items(), 
+                      key=lambda x: abs(x[1]["slope"]), 
+                      reverse=True)
+
+# Print results
+print("Per-input sensitivity analysis:")
+print("-" * 80)
+print(f"{'Input':<50} | {'Slope':>10} | {'R²':>10} | {'Points':>6}")
+print("-" * 80)
+for inp, data in sorted_inputs:
+    # Truncate input text
+    short_inp = inp[:47] + "..." if len(inp) > 47 else inp
+    print(f"{short_inp:<50} | {data['slope']:>10.4f} | {data['r2']:>10.4f} | {data['points']:>6}")
+
+# Visualize individual input models
+plt.figure(figsize=(15, 12))
+n_inputs = len(sorted_inputs)
+rows = (n_inputs + 1) // 2  # Calculate rows needed
+
+for i, (inp, data) in enumerate(sorted_inputs[:min(n_inputs, 8)]):  # Show at most 8 inputs
+    plt.subplot(rows, 2, i+1)
+    
+    # Plot points
+    plt.scatter(data["X"], data["y"], alpha=0.7)
+    
+    # Plot regression line
+    x_range = np.array([min(data["X"]), max(data["X"])])
+    slope = data["slope"]
+    intercept = 0  # Assuming zero intercept for simplicity
+    plt.plot(x_range, slope * x_range + intercept, 'r-')
+    
+    # Add info
+    short_title = inp[:30] + "..." if len(inp) > 30 else inp
+    plt.title(f"{short_title}\nSlope: {slope:.4f}, R²: {data['r2']:.4f}")
+    plt.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+    plt.axvline(x=0, color='k', linestyle='--', alpha=0.3)
+    plt.grid(alpha=0.3)
+    
+plt.tight_layout()
+plt.savefig('per_input_sensitivity.png')
 plt.show()
 ```
 
@@ -900,17 +1074,20 @@ print(f"Results saved to {results_path}")
    - Added better error handling for different model architectures
    - Improved support for all head types (regression, classification, token)
    - Added statistical significance testing with random baselines
+   - Added position-aware patching to precisely target the right tokens
 
 2. **Added Statistical Analysis**:
    - Added weight distribution analysis and detailed statistics
    - Included PCA visualization to see relationships between vectors
    - Added random baseline comparison to establish statistical significance
    - Added linear regression to quantify patching relationships
+   - Added per-input sensitivity analysis to identify which inputs are most affected
 
 3. **Better Visualization**:
    - More informative plots with proper annotations
    - Statistical metrics shown directly on visualizations
    - Results saved in structured JSON format for further analysis
+   - Added multi-panel plots to show relationships from different perspectives
 
 ## Next Steps
 

@@ -1,0 +1,34 @@
+{
+  "target_layer": 8,
+  "target_neuron": 481,
+  "base_model": "gpt2",
+  "dataset_size": 500,
+  "weight_similarities": {
+    "head_input": 0.045291103422641754,
+    "head_output": -0.03094005584716797,
+    "input_output": -0.36270672082901
+  },
+  "projections": {
+    "head": {
+      "correlation": 0.1735598912494121,
+      "r_squared": 0.030123035850507754,
+      "p_value": 9.585659344435449e-05
+    },
+    "input": {
+      "correlation": -0.489360037470967,
+      "r_squared": 0.23947324627358624,
+      "p_value": 0.0
+    },
+    "output": {
+      "correlation": -0.01467502173575345,
+      "r_squared": 0.0002153562629448362,
+      "p_value": 0.7434109040185879
+    },
+    "neuron_dir": {
+      "correlation": -0.3710336987233456,
+      "r_squared": 0.13766600558832637,
+      "p_value": 0.0
+    }
+  },
+  "timestamp": "2025-04-29T20:55:53"
+}

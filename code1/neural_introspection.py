@@ -539,6 +539,15 @@ def train_model(
     }
 
 
+    # Get activation statistics from dataset for normalization parameters
+    # Even though we want minimal normalization, these parameters are needed
+    # for debugging and logging purposes in the trainer
+    dataset_metadata = dataset.get_metadata()
+    activation_mean = dataset_metadata["activation_stats"]["mean"]
+    activation_std = dataset_metadata["activation_stats"]["std"]
+    
+    logger.info(f"  Dataset activation stats - Mean: {activation_mean:.4f}, Std: {activation_std:.4f}")
+
     predictor = ActivationPredictor(
         base_model=model,
         head_type=head_type,
@@ -551,6 +560,8 @@ def train_model(
         head_config=head_config,
         device=device,
         bin_edges=bin_edges,
+        activation_mean=activation_mean,
+        activation_std=activation_std,
     )
     
     # Create trainer

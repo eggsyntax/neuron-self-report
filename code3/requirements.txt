@@ -1,0 +1,9 @@
+torch
+transformer-lens
+transformers
+numpy
+matplotlib
+pandas
+tqdm
+scikit-learn
+wandb

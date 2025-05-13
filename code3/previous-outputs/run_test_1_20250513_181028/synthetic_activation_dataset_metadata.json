@@ -1,0 +1,12 @@
+{
+    "dataset_type": "synthetic",
+    "source_dataset_name": "glue",
+    "source_dataset_config": "mrpc",
+    "num_samples_requested": 100,
+    "num_samples_generated": 100,
+    "model_name": "gpt2",
+    "hook_point": "blocks.6.mlp.hook_post",
+    "neuron_layer": 6,
+    "neuron_index": 1234,
+    "token_position": "last"
+}

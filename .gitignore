@@ -1,5 +1,6 @@
 .DS_Store
 *.pyc
+.envrc
 **/*.pyc
 **/__pycache__/
 code1/.envrc
@@ -13,3 +14,5 @@ code1/mech_interp/notebooks/*.png
 /code1/CLAUDE.md
 
 **/CLAUDE.local.md
+
+**/.claude/settings.local.json

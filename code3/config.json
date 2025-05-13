@@ -1,0 +1,23 @@
+{
+    "model_name": "gpt2-small",
+    "neuron_layer": 6,
+    "neuron_index": 1234,
+    "output_type": "regression",
+    "data_source": "synthetic",
+    "num_samples": 100,
+    "epochs": 3,
+    "learning_rate": 0.001,
+    "batch_size": 16,
+    "unfreeze_strategy": "head_only",
+    "output_dir": "output/run_test_1",
+    "use_wandb": false,
+    "random_seed": 42,
+    "balance_dataset": true,
+    "balance_dataset_bins": 5,
+    "synthetic_source_dataset_name": "glue",
+    "synthetic_source_dataset_config": "mrpc",
+    "synthetic_text_field": "sentence1",
+    "synthetic_min_text_length": 5,
+    "target_token_position_for_features": "last",
+    "token_position": "last"
+}

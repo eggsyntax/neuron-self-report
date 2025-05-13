@@ -22,6 +22,7 @@ class ActivationDataset(Dataset):
         max_length: int = 512,
         output_tokens: bool = False,
         num_bins: int = 10,
+        force_zero_to_nine: bool = False,
     ):
         """
         Initialize dataset for activation prediction.
@@ -40,6 +41,7 @@ class ActivationDataset(Dataset):
         self.max_length = max_length
         self.output_tokens = output_tokens
         self.num_bins = num_bins
+        self.force_zero_to_nine = force_zero_to_nine
         
         if output_tokens:
             # Discretize activations into bins
@@ -56,11 +58,18 @@ class ActivationDataset(Dataset):
             # Convert activations to bin indices (0 to num_bins-1)
             self.discretized = np.digitize(activations, self.bin_edges[1:])
             
+            # For token prediction, we want to ensure the values are exactly 0-9
+            if force_zero_to_nine and num_bins == 10:
+                # Ensure discretized values are in the range 0-9 exactly
+                self.discretized = np.clip(self.discretized, 0, 9)
+                print(f"Forcing discretized values to exactly 0-9 range, unique values: {np.unique(self.discretized)}")
+            
             # Save mapping information
             self.bin_info = {
                 "min_val": self.min_val,
                 "max_val": self.max_val,
                 "bin_edges": self.bin_edges.tolist(),
+                "force_zero_to_nine": force_zero_to_nine,
             }
         
     def __len__(self):
@@ -149,6 +158,7 @@ class ActivationDatasetGenerator:
         target_samples_per_bin: int = 100,
         min_activation: Optional[float] = None,
         max_activation: Optional[float] = None,
+        force_zero_to_nine: bool = False,
     ) -> Tuple[ActivationDataset, Dict]:
         """
         Generate dataset for a specific neuron/activation.
@@ -233,6 +243,7 @@ class ActivationDatasetGenerator:
             max_length=max_length,
             output_tokens=output_tokens,
             num_bins=num_bins,
+            force_zero_to_nine=force_zero_to_nine,
         )
         
         # Save metadata

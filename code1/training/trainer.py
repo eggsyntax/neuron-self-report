@@ -883,9 +883,49 @@ class PredictorTrainer:
                 # Forward pass
                 optimizer.zero_grad()
 
-                # For classification
-                if self.predictor.head_type == "classification":
+                # For classification and token prediction
+                if self.predictor.head_type in ["classification", "token"]:
                     outputs = self.predictor(input_ids, attention_mask)
+                    
+                    # Check for dimension mismatch in token prediction case
+                    if self.predictor.head_type == "token":
+                        # Log dimensions for debugging
+                        logger.info(f"Token prediction dimensions - outputs: {outputs.shape}, labels: {labels.shape}")
+                        
+                        # First check if labels are 1D (no second dimension)
+                        if len(labels.shape) == 1:
+                            # Labels are already in class indices format (0 to n)
+                            logger.info("Labels are already in class indices format")
+                            
+                            # For token prediction, we assume labels are already in the 0-9 range exactly
+                            # Just verify this is the case and warn if not
+                            if torch.max(labels) > 9 or torch.min(labels) < 0:
+                                # This shouldn't happen with our modifications to the dataset generator
+                                logger.warning(f"WARNING: Token prediction labels outside 0-9 range: [{torch.min(labels).item()}, {torch.max(labels).item()}]")
+                                # Ensure they're in range by clipping
+                                labels = torch.clamp(labels, 0, 9)
+                        
+                        # Handle 2D labels
+                        elif len(labels.shape) > 1:
+                            # Check for shape mismatch
+                            if outputs.shape[1] != labels.shape[1]:
+                                logger.info(f"Dimension mismatch in token prediction - outputs: {outputs.shape}, labels: {labels.shape}")
+                                # We have a dimension mismatch. Token prediction outputs 10 classes (for digits 0-9)
+                                # but our labels might be in one-hot encoding or have a different number of classes.
+                            
+                            # For token prediction, if labels are one-hot encoded, convert to class indices
+                            if labels.shape[1] > 1:
+                                # Convert one-hot to indices
+                                logger.info("Converting one-hot labels to class indices for token prediction")
+                                labels = torch.argmax(labels, dim=1)
+                        
+                        # For token prediction, verify labels are in the 0-9 range
+                        if torch.max(labels) > 9 or torch.min(labels) < 0:
+                            # Just warn since we should have already handled this in the dataset
+                            logger.warning(f"WARNING: Token prediction labels outside 0-9 range after conversion: [{torch.min(labels).item()}, {torch.max(labels).item()}]")
+                            # Ensure they're in range by clipping
+                            labels = torch.clamp(labels, 0, 9)
+                    
                     loss = loss_fn(outputs, labels)
                 # For regression
                 else:
@@ -1152,9 +1192,9 @@ class PredictorTrainer:
 
     def _get_loss_function(self) -> Callable:
         """Get appropriate loss function based on head type"""
-        if self.predictor.head_type == "classification":
-            # For classification, use CrossEntropyLoss
-            if hasattr(self.predictor.head, "class_weights") and self.predictor.head.class_weights is not None:
+        if self.predictor.head_type == "classification" or self.predictor.head_type == "token":
+            # For classification and token prediction, use CrossEntropyLoss
+            if self.predictor.head_type == "classification" and hasattr(self.predictor.head, "class_weights") and self.predictor.head.class_weights is not None:
                 return nn.CrossEntropyLoss(weight=self.predictor.head.class_weights)
             else:
                 return nn.CrossEntropyLoss()
@@ -1205,8 +1245,32 @@ class PredictorTrainer:
 
                 # Forward pass
                 outputs = self.predictor(input_ids, attention_mask)
+                
+                # Handle potential dimension mismatch for token prediction evaluation
+                if self.predictor.head_type == "token":
+                    # First check if labels are 1D (class indices)
+                    if len(labels.shape) == 1:
+                        # Labels are already in class indices format
+                        # Map to 0-9 range if needed
+                        # Just ensure labels are in the 0-9 range (should already be handled in dataset)
+                        if torch.max(labels) > 9 or torch.min(labels) < 0:
+                            logger.warning(f"WARNING: Evaluation - token prediction labels outside 0-9 range: [{torch.min(labels).item()}, {torch.max(labels).item()}]")
+                            labels = torch.clamp(labels, 0, 9)
+                    # For 2D labels (one-hot or multi-class)
+                    elif len(labels.shape) > 1:
+                        # Check if dimensions don't match
+                        if outputs.shape[1] != labels.shape[1]:
+                            # Convert one-hot to indices if needed
+                            if labels.shape[1] > 1:
+                                labels = torch.argmax(labels, dim=1)
+                            
+                            # Map labels to 0-9 range if needed
+                            if torch.max(labels) >= 10:
+                                max_label = torch.max(labels).item()
+                                labels = torch.floor((labels.float() / max_label) * 9).long()
+                
                 loss = loss_fn(outputs, labels)
-
+                
                 # DEBUG: Log first batch outputs
                 # if not first_batch_logged:
                 #     logger.info(f"DEBUG - {split_name} evaluation, first batch:")
@@ -1502,8 +1566,36 @@ class PredictorTrainer:
                             pred = (probs.cpu().numpy() * bin_centers.reshape(1, -1)).sum(axis=1)[0]
                         else:
                             pred = torch.argmax(outputs, dim=1).item()
+                    elif self.predictor.head_type == "token":
+                        # For token prediction, convert the multi-class logits to a continuous value
+                        # First convert to probabilities
+                        probs = torch.softmax(outputs, dim=1)
+                        
+                        # Then use weighted average with digit values (0-9)
+                        digit_values = np.arange(10)
+                        pred = (probs.cpu().numpy() * digit_values.reshape(1, -1)).sum(axis=1)[0]
+                        
+                        logger.info(f"Token prediction value: {pred:.4f}")
+                        
+                        # If we have activation statistics, we can map to the original activation range
+                        if hasattr(self.predictor, 'activation_mean') and hasattr(self.predictor, 'activation_std'):
+                            # Assuming the token prediction maps from [0-9] to normalized activation space
+                            min_act = self.predictor.activation_mean - 2 * self.predictor.activation_std
+                            max_act = self.predictor.activation_mean + 2 * self.predictor.activation_std
+                            act_range = max_act - min_act
+                            
+                            # Map from [0-9] to activation range
+                            pred = min_act + (pred / 9.0) * act_range
+                            logger.info(f"Mapped to activation range: {pred:.4f}")
                     else:
-                        pred = outputs.item()
+                        # For regression predictions, outputs should be a scalar
+                        if isinstance(outputs, torch.Tensor) and outputs.numel() == 1:
+                            pred = outputs.item()
+                        else:
+                            # Handle unexpected format gracefully
+                            logger.warning(f"Unexpected output format: {outputs.shape if isinstance(outputs, torch.Tensor) else type(outputs)}")
+                            # Use the first element if tensor or convert to float if needed
+                            pred = outputs[0] if isinstance(outputs, (list, np.ndarray)) or (isinstance(outputs, torch.Tensor) and outputs.numel() > 1) else float(outputs)
                     
                     # Get the raw activation value
                     raw_activation = activations.item()

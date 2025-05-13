@@ -380,20 +380,41 @@ def generate_dataset(
         # Repeat texts if needed
         dataset_texts = (texts * ((dataset_size // len(texts)) + 1))[:dataset_size]
     
-    # For dataset generation, we care if we need discretized outputs (for classification)
-    # Token head uses continuous values like regression, but token-based prediction
-    use_discretized_output = head_type == "classification"
+    # For dataset generation, we need discretized outputs for token prediction too, 
+    # but in a different way than classification
+    use_discretized_output = head_type in ["classification", "token"]
     
-    # Generate dataset
-    dataset, metadata = generator.generate_dataset(
-        texts=dataset_texts,
-        layer=layer,
-        neuron_idx=neuron,
-        layer_type=layer_type,
-        token_pos=token_pos,
-        output_tokens=use_discretized_output,  # Only classification needs discretized outputs
-        num_bins=num_bins,
-        balance_bins=use_discretized_output,  # Balance bins for classification
+    # Generate dataset, with special handling for token-based prediction
+    if head_type == "token":
+        logger.info("Generating dataset for token-based prediction")
+        # For token prediction, we want to map activations to the range 0-9
+        # Create 10 bins that will map to the 10 digits
+        
+        # For token prediction, force exactly 10 bins (0-9) without any scaling needed
+        logger.info("Forcing exactly 10 bins (0-9) for token prediction")
+        dataset, metadata = generator.generate_dataset(
+            texts=dataset_texts,
+            layer=layer,
+            neuron_idx=neuron,
+            layer_type=layer_type,
+            token_pos=token_pos,
+            output_tokens=True,  # Always discretized for token prediction
+            num_bins=10,  # Always use exactly 10 bins for token prediction (digits 0-9)
+            balance_bins=False,  # Don't balance bins for token prediction
+            force_zero_to_nine=True,  # Force bins to be exactly 0-9
+        )
+        logger.info("Generated token-based dataset with 10 bins (mapping to digits 0-9)")
+    else:
+        # Generate dataset for classification or regression as usual
+        dataset, metadata = generator.generate_dataset(
+            texts=dataset_texts,
+            layer=layer,
+            neuron_idx=neuron,
+            layer_type=layer_type,
+            token_pos=token_pos,
+            output_tokens=use_discretized_output,  # Only classification needs discretized outputs
+            num_bins=num_bins,
+            balance_bins=use_discretized_output,  # Balance bins for classification
     )
     
     # Create output directory structure

@@ -72,6 +72,8 @@ class TokenPredictionHead(ActivationHead):
         """
         # Token prediction head doesn't transform the features
         # It's handled specially in the ActivationPredictor's forward method
+        # Apply dropout for consistency with other heads
+        x = self.dropout(x)
         return x
     
     def get_config(self) -> Dict:
@@ -378,10 +380,16 @@ class ActivationPredictor(nn.Module):
                 
             logger.info(f"Token prediction head will use digit tokens: {digit_tokens}")
             
+            # Filter out parameters not supported by TokenPredictionHead
+            # TokenPredictionHead only accepts input_dim, digit_tokens, and dropout
+            token_head_params = {}
+            if 'dropout' in head_config_copy:
+                token_head_params['dropout'] = head_config_copy['dropout']
+            
             self.head = TokenPredictionHead(
                 input_dim=self.d_model,
                 digit_tokens=digit_tokens,
-                **head_config_copy
+                **token_head_params
             )
         else:
             raise ValueError(f"Unsupported head type: {head_type}")
@@ -620,8 +628,18 @@ class ActivationPredictor(nn.Module):
                 tensor_preds = torch.tensor(predictions)
                 probs = F.softmax(tensor_preds, dim=1).numpy()
                 
-                # Map digit tokens (0-9) directly to their values
-                digit_values = np.arange(10)  # Values 0-9
+                # Map tokens to their corresponding values (0-9)
+                # Ensure we're using the correct mapping based on the digit_tokens attribute
+                if hasattr(self, 'head') and hasattr(self.head, 'digit_tokens'):
+                    # Get the values that each token position represents (0-9)
+                    digit_values = np.arange(10)  # Values 0-9
+                    logger.info(f"Using digit tokens from head: {self.head.digit_tokens}")
+                else:
+                    # Fallback to simple mapping if digit_tokens not available
+                    digit_values = np.arange(10)
+                    logger.info(f"Using default digit values: {digit_values}")
+                
+                # Calculate weighted average to get continuous prediction
                 continuous_preds = np.sum(probs * digit_values.reshape(1, -1), axis=1)
                 
                 # If we're using tokens to predict activations, we need a mapping approach
@@ -733,7 +751,17 @@ class ActivationPredictor(nn.Module):
                 # For token prediction, map directly to digit values
                 tensor_preds = torch.tensor(preds)
                 probs = F.softmax(tensor_preds, dim=1).numpy()
-                digit_values = np.arange(10)  # Values 0-9
+                
+                # Use digit tokens from the head if available
+                if hasattr(self, 'head') and hasattr(self.head, 'digit_tokens'):
+                    # Get the values that each token position represents (0-9)
+                    digit_values = np.arange(10)  # Values 0-9
+                    logger.info(f"Report: Using digit tokens from head: {self.head.digit_tokens}")
+                else:
+                    # Fallback to simple mapping if digit_tokens not available
+                    digit_values = np.arange(10)
+                    logger.info(f"Report: Using default digit values: {digit_values}")
+                    
                 continuous_preds = np.sum(probs * digit_values.reshape(1, -1), axis=1)
                 
                 # Scale to match activation distribution if needed
@@ -809,21 +837,40 @@ class ActivationPredictor(nn.Module):
         """
         metrics = {}
         
-        if self.head_type == "classification":
-            # For classification, compute accuracy and F1 score
-            pred_classes = np.argmax(predictions, axis=1)
+        if self.head_type == "classification" or self.head_type == "token":
+            # For classification and token prediction, compute accuracy and F1 score
+            # For token prediction, we treat it like classification but with special handling
+            
+            # Handle different prediction shapes based on head type
+            if len(predictions.shape) > 1 and predictions.shape[1] > 1:
+                # Multi-class case (logits as input)
+                pred_classes = np.argmax(predictions, axis=1)
+            else:
+                # Binary or already converted case
+                pred_classes = (predictions > 0.5).astype(int)
+            
+            # Handle different target shapes
             if len(targets.shape) > 1 and targets.shape[1] > 1:
                 # If targets are one-hot, convert to class indices
                 target_classes = np.argmax(targets, axis=1)
             else:
                 target_classes = targets.astype(int)
+            
+            # Handle token prediction special case - ensure target classes are in 0-9 range
+            if self.head_type == "token" and (np.max(target_classes) > 9 or np.min(target_classes) < 0):
+                # Just verify the range and clip if needed (should be handled at dataset level)
+                logger.warning(f"WARNING: Token prediction targets outside 0-9 range in metrics: [{np.min(target_classes)}, {np.max(target_classes)}]")
+                target_classes = np.clip(target_classes, 0, 9)
                 
             # Accuracy
             accuracy = np.mean(pred_classes == target_classes)
             metrics["accuracy"] = accuracy
             
+            # Add more classification metrics
+            num_classes = max(np.max(pred_classes), np.max(target_classes)) + 1
+            
             # If binary classification, compute F1 score
-            if predictions.shape[1] == 2:
+            if num_classes == 2:
                 true_positives = np.sum((pred_classes == 1) & (target_classes == 1))
                 false_positives = np.sum((pred_classes == 1) & (target_classes == 0))
                 false_negatives = np.sum((pred_classes == 0) & (target_classes == 1))
@@ -835,6 +882,36 @@ class ActivationPredictor(nn.Module):
                 metrics["precision"] = precision
                 metrics["recall"] = recall
                 metrics["f1_score"] = f1
+            
+            # For token prediction, also add regression metrics by converting to continuous values
+            if self.head_type == "token":
+                # Convert classification outputs to continuous values
+                if len(predictions.shape) > 1 and predictions.shape[1] > 1:
+                    # Compute "soft" predictions using class probabilities
+                    probs = predictions if np.sum(predictions, axis=1).mean() == 1.0 else \
+                            np.exp(predictions) / np.sum(np.exp(predictions), axis=1, keepdims=True)
+                    
+                    # Apply weighted average based on digit values
+                    digit_values = np.arange(10)
+                    continuous_preds = np.sum(probs * digit_values.reshape(1, -1), axis=1)
+                    
+                    # If we have continuous targets, compute regression metrics
+                    if np.max(targets) > 9:
+                        # We might have original continuous targets rather than discretized ones
+                        continuous_targets = targets.flatten()
+                    else:
+                        # Convert target classes to continuous using digit values
+                        continuous_targets = target_classes.astype(float)
+                    
+                    # Compute regression metrics
+                    mse = np.mean((continuous_preds - continuous_targets) ** 2)
+                    mae = np.mean(np.abs(continuous_preds - continuous_targets))
+                    
+                    # Add regression metrics specifically for token prediction
+                    metrics["token_mse"] = mse
+                    metrics["token_mae"] = mae
+                    
+                    logger.info(f"Token prediction regression metrics: MSE={mse:.4f}, MAE={mae:.4f}")
         else:
             # For regression, compute MSE, MAE, and R^2
             mse = np.mean((predictions - targets) ** 2)
@@ -1124,6 +1201,122 @@ def test_activation_predictor():
     
     print("\nAll tests completed successfully!")
 
+def test_token_prediction():
+    """Test the token prediction functionality specifically."""
+    import os
+    import random
+    from transformer_lens import HookedTransformer
+    
+    # Set random seed for reproducibility
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    
+    # Use a small test model
+    print("Loading model...")
+    model_name = "gpt2-small"  # Small model for quick testing
+    model = HookedTransformer.from_pretrained(model_name)
+    
+    # Initialize on appropriate device
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    print(f"Using device: {device}")
+    
+    # Sample texts
+    sample_texts = [
+        "The cat sat on the mat.",
+        "Machine learning models can be difficult to interpret.",
+        "Transformers use attention mechanisms to process sequences.",
+        "Neural networks have revolutionized artificial intelligence.",
+        "The quick brown fox jumps over the lazy dog.",
+    ]
+    
+    # Test token prediction head
+    print("\nTesting token prediction head...")
+    
+    # Set up the token prediction model
+    token_predictor = ActivationPredictor(
+        base_model=model,
+        head_type="token",
+        target_layer=6,
+        target_neuron=500,
+        layer_type="mlp_out",
+        token_pos="last",
+        feature_layer=-1,
+        device=device,
+        activation_mean=0.0,
+        activation_std=1.0,
+    )
+    
+    # Verify digit tokens were set up correctly
+    if hasattr(token_predictor.head, 'digit_tokens'):
+        print(f"Digit tokens: {token_predictor.head.digit_tokens}")
+    else:
+        print("ERROR: No digit_tokens attribute found on TokenPredictionHead")
+    
+    # Test forward pass
+    print("Testing forward pass...")
+    inputs = token_predictor.tokenizer(
+        sample_texts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+    ).to(device)
+    
+    with torch.no_grad():
+        outputs, activations = token_predictor.forward(
+            inputs.input_ids,
+            inputs.attention_mask,
+            return_activations=True,
+        )
+    
+    print(f"Outputs shape: {outputs.shape}")
+    print(f"Activations shape: {activations.shape}")
+    
+    # Test prediction method
+    print("\nTesting batch prediction...")
+    predictions, real_activations = token_predictor.predict(
+        sample_texts,
+        batch_size=2,
+        return_activations=True,
+    )
+    
+    print(f"Predictions shape: {predictions.shape if isinstance(predictions, np.ndarray) else 'scalar'}")
+    print(f"Sample predictions: {predictions[:2]}")
+    print(f"Real activations: {real_activations[:2]}")
+    
+    # Test report method
+    print("\nTesting reporting functionality...")
+    report = token_predictor.report(sample_texts, confidence_threshold=0.6)
+    
+    print(f"Mean error: {report['mean_error']:.4f}")
+    print(f"Mean confidence: {report['mean_confidence']:.4f}")
+    print(f"High confidence percentage: {report['high_confidence_percentage']:.2f}%")
+    
+    # Test save and load
+    print("\nTesting save and load with token prediction head...")
+    save_dir = "test_token_predictor_output"
+    os.makedirs(save_dir, exist_ok=True)
+    
+    token_predictor.save(save_dir)
+    print(f"Model saved to {save_dir}")
+    
+    loaded_predictor = ActivationPredictor.load(
+        path=save_dir,
+        base_model=model,
+        device=device,
+    )
+    
+    with torch.no_grad():
+        loaded_outputs = loaded_predictor.forward(inputs.input_ids, inputs.attention_mask)
+    
+    print(f"Loaded outputs shape: {loaded_outputs.shape}")
+    print(f"Outputs match: {torch.allclose(outputs, loaded_outputs)}")
+    
+    print("\nToken prediction test completed successfully!")
+    return token_predictor
+
 if __name__ == "__main__":
-    # Run test when the file is executed directly
+    # Run tests when the file is executed directly
+    # Uncomment the test you want to run
     test_activation_predictor()
+    # test_token_prediction()

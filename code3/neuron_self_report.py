@@ -47,15 +47,26 @@ DEFAULT_CONFIG = {
     "early_stopping_patience": 3,
     "random_seed": 42, # For reproducibility
     # Scanner specific defaults
+    "run_neuron_scanner": False, # Set to true to run the scanner
+    "scanner_num_texts": 100, # Number of texts to use for scanning
+    "scanner_texts_source_dataset_name": "stas/openwebtext-10k", # A smaller, diverse dataset for scanning
+    "scanner_texts_source_dataset_config": None, # No specific config for openwebtext-10k usually
+    "scanner_texts_text_field": "text",
+    "scanner_texts_min_length": 10,
     "scanner_layers_to_scan": None, # None for all layers, or list of layer indices
+    "scanner_target_token_position": "last",
     "scanner_top_n_to_display": 5,
     "scanner_variance_weight": 0.5,
     "scanner_range_weight": 0.5,
+    "scanner_auto_select_top_neuron": True, # If true, automatically use the top scanned neuron
     # ActivationPredictor specific
     "feature_extraction_hook_point": None, # Hook point for features fed to the predictor head
                                            # e.g. f"blocks.{model.cfg.n_layers-1}.hook_resid_post"
     "target_token_position_for_features": "last", # Token position for features for the head
     "num_classes_classification": 5, # If output_type is 'classification'
+    "token_on_id": None, # Will be populated with tokenizer.encode(" on")[0]
+    "token_off_id": None, # Will be populated with tokenizer.encode(" off")[0]
+    "token_digit_ids": [], # Will be populated with tokenizer.encode(" 0")[0] to tokenizer.encode(" 9")[0]
     # Synthetic dataset generation
     "synthetic_source_dataset_name": "wikipedia",
     "synthetic_source_dataset_config": "20220301.en",
@@ -83,10 +94,11 @@ def load_config(config_path: str) -> Dict[str, Any]:
 def setup_output_directory(config: Dict[str, Any]) -> str:
     """Sets up the output directory, archiving previous run if it exists."""
     output_dir = config['output_dir']
+    output_dir_parent = os.path.dirname(os.path.abspath(output_dir)) # Get parent of the output_dir
     
     if os.path.exists(output_dir):
         # Archive previous output
-        archive_parent_dir = "previous-outputs"
+        archive_parent_dir = os.path.join(output_dir_parent, "previous-outputs") # Relative to output_dir's parent
         if not os.path.exists(archive_parent_dir):
             os.makedirs(archive_parent_dir)
         
@@ -99,13 +111,10 @@ def setup_output_directory(config: Dict[str, Any]) -> str:
             shutil.move(output_dir, archive_path)
         except Exception as e:
             print(f"Could not archive existing output directory: {e}. Overwriting might occur or errors.")
-            # If shutil.move fails (e.g. output_dir is a file), we might want to handle it.
-            # For now, we'll let os.makedirs fail if output_dir is a file.
     
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True) # exist_ok=True in case archiving failed but dir still exists
+        os.makedirs(output_dir, exist_ok=True) 
     
-    # Save the current config to the output directory
     config_save_path = os.path.join(output_dir, "run_config.json")
     with open(config_save_path, 'w') as f:
         json.dump(config, f, indent=4)
@@ -113,9 +122,7 @@ def setup_output_directory(config: Dict[str, Any]) -> str:
     
     return output_dir
 
-
 def determine_device(config_device: Optional[str]) -> str:
-    """Determines the computation device."""
     if config_device:
         if config_device == "mps" and not torch.backends.mps.is_available():
             print("Warning: MPS device requested but not available. Falling back to CPU.")
@@ -124,300 +131,292 @@ def determine_device(config_device: Optional[str]) -> str:
             print("Warning: CUDA device requested but not available. Falling back to CPU.")
             return "cpu"
         return config_device
-    # Auto-detect
-    if torch.backends.mps.is_available():
-        return "mps"
-    if torch.cuda.is_available():
-        return "cuda"
+    if torch.backends.mps.is_available(): return "mps"
+    if torch.cuda.is_available(): return "cuda"
     return "cpu"
 
 def main_pipeline(config_path: str):
-    """
-    Orchestrates the end-to-end neuron self-report pipeline.
-    """
     config = load_config(config_path)
     
-    # Setup device
     device_str = determine_device(config.get("device"))
-    config["device"] = device_str # Update config with the determined device
+    config["device"] = device_str
     print(f"Using device: {device_str}")
 
-    # Set random seed for reproducibility
     seed = config.get("random_seed", 42)
     torch.manual_seed(seed)
     np.random.seed(seed)
-    if device_str == "cuda":
-        torch.cuda.manual_seed_all(seed)
+    if device_str == "cuda": torch.cuda.manual_seed_all(seed)
 
-    # Setup output directory
     output_dir = setup_output_directory(config)
-    if config.get("wandb_run_name") is None: # Auto-generate W&B run name if not provided
+    if config.get("wandb_run_name") is None:
         config["wandb_run_name"] = f"{config['model_name']}_L{config['neuron_layer']}N{config['neuron_index']}_{datetime.now().strftime('%Y%m%d-%H%M')}"
 
-
-    # 1. Load Model
     print(f"Loading base model: {config['model_name']}...")
     base_model = HookedTransformer.from_pretrained(config['model_name'], device=device_str)
-    base_model.eval() # Start in eval mode
+    base_model.eval()
 
-    # 2. Neuron Selection (if not fully specified in config)
-    # This step might involve using NeuronScanner or taking direct config values.
-    # For now, assume neuron_layer and neuron_index are either in config or need to be found.
+    from transformer_lens.utils import get_act_name as tl_get_act_name 
+    from datasets import load_dataset
+
+    if config.get("run_neuron_scanner", False):
+        print("\n--- Running Neuron Scanner ---")
+        scanner = NeuronScanner(base_model, device=device_str)
+        scanner.configure_output(config) 
+
+        print(f"Loading texts for scanner from: {config['scanner_texts_source_dataset_name']}")
+        scanner_texts = []
+        try:
+            scan_dataset_args = [config['scanner_texts_source_dataset_name']]
+            if config.get('scanner_texts_source_dataset_config'): 
+                scan_dataset_args.append(config['scanner_texts_source_dataset_config'])
+            
+            scan_hf_dataset = load_dataset(*scan_dataset_args, split='train', streaming=True)
+            
+            for i, example in enumerate(scan_hf_dataset):
+                if len(scanner_texts) >= config['scanner_num_texts']: break
+                text_sample = example.get(config['scanner_texts_text_field'], "")
+                if isinstance(text_sample, str) and len(text_sample) >= config['scanner_texts_min_length']:
+                    scanner_texts.append(" ".join(text_sample.split())) 
+            
+            if not scanner_texts: raise ValueError("No suitable texts found for scanner from the source.")
+            print(f"Collected {len(scanner_texts)} texts for scanning.")
+        except Exception as e:
+            print(f"Error loading texts for scanner: {e}. Skipping scanner and using config values.")
+            if config.get("hook_point") is None: 
+                 if not (0 <= config['neuron_layer'] < base_model.cfg.n_layers):
+                    raise ValueError(f"Invalid neuron_layer {config['neuron_layer']} for model with {base_model.cfg.n_layers} layers.")
+                 config['hook_point'] = tl_get_act_name("post", config['neuron_layer'])
+        else: 
+            top_neurons_df = scanner.scan(
+                texts_or_dataset_df=scanner_texts,
+                layers_to_scan=config.get('scanner_layers_to_scan'),
+                target_token_position=config.get('scanner_target_token_position', 'last'),
+                top_n_to_display=config.get('scanner_top_n_to_display', 5),
+                variance_weight=config.get('scanner_variance_weight', 0.5),
+                range_weight=config.get('scanner_range_weight', 0.5)
+            )
+            if top_neurons_df is not None and not top_neurons_df.empty:
+                if config.get("scanner_auto_select_top_neuron", True):
+                    selected_neuron = top_neurons_df.iloc[0]
+                    original_layer, original_index = config['neuron_layer'], config['neuron_index']
+                    config['neuron_layer'], config['neuron_index'] = int(selected_neuron['layer']), int(selected_neuron['neuron_index'])
+                    if original_layer != config['neuron_layer'] or original_index != config['neuron_index']:
+                        print(f"Scanner auto-selected Neuron: Layer {config['neuron_layer']}, Index {config['neuron_index']}")
+                        print(f"Updated target from (L{original_layer}, N{original_index}) to (L{config['neuron_layer']}, N{config['neuron_index']}) based on scanner.")
+                    else:
+                        print(f"Scanner confirmed config Neuron: Layer {config['neuron_layer']}, Index {config['neuron_index']}")
+                else:
+                    print("Manual neuron selection from scanner results is not yet implemented. Using first result or config.")
+                    selected_neuron = top_neurons_df.iloc[0] 
+                    config['neuron_layer'], config['neuron_index'] = int(selected_neuron['layer']), int(selected_neuron['neuron_index'])
+                if not (0 <= config['neuron_layer'] < base_model.cfg.n_layers): 
+                    raise ValueError(f"Invalid neuron_layer {config['neuron_layer']} from scanner for model with {base_model.cfg.n_layers} layers.")
+                config['hook_point'] = tl_get_act_name("post", config['neuron_layer'])
+            else: 
+                print("Neuron scanner did not find any suitable candidate neurons. Using values from config.")
+                if config.get("hook_point") is None: 
+                    if not (0 <= config['neuron_layer'] < base_model.cfg.n_layers):
+                        raise ValueError(f"Invalid neuron_layer {config['neuron_layer']} for model with {base_model.cfg.n_layers} layers.")
+                    config['hook_point'] = tl_get_act_name("post", config['neuron_layer'])
     
-    # Construct hook_point for dataset generation if not explicitly given for that
-    # This is the neuron whose activation we want to predict.
     if config.get("hook_point") is None:
-        # Default to MLP post-activation hook for the target neuron
-        from transformer_lens.utils import get_act_name as tl_get_act_name
-        # Ensure neuron_layer is valid
         if not (0 <= config['neuron_layer'] < base_model.cfg.n_layers):
-             raise ValueError(f"Invalid neuron_layer {config['neuron_layer']} for model with {base_model.cfg.n_layers} layers.")
-        config['hook_point'] = tl_get_act_name("post", config['neuron_layer']) # For MLP activations
-        print(f"Constructed hook_point for target neuron: {config['hook_point']}")
+            raise ValueError(f"Invalid neuron_layer {config['neuron_layer']} for model with {base_model.cfg.n_layers} layers.")
+        config['hook_point'] = tl_get_act_name("post", config['neuron_layer'])
+    
+    print(f"Proceeding with Target Layer: {config['neuron_layer']}, Neuron Index: {config['neuron_index']}, Hook: {config['hook_point']}")
 
-
-    # TODO: Implement NeuronScanner integration if neuron_index is not specified or needs confirmation.
-    # For now, we assume neuron_layer and neuron_index are sufficiently specified in config.
-    # If scanner is used:
-    # scanner = NeuronScanner(base_model, device=device_str)
-    # scan_texts = ... (e.g., from a small generic dataset or first few from synthetic source)
-    # top_neurons_df = scanner.scan(scan_texts, ...)
-    # selected_neuron = ... (user input or take top one)
-    # config['neuron_layer'] = selected_neuron['layer']
-    # config['neuron_index'] = selected_neuron['neuron_index']
-    # config['hook_point'] = tl_get_act_name("post", config['neuron_layer'])
-    print(f"Targeting Layer: {config['neuron_layer']}, Neuron Index: {config['neuron_index']} at Hook: {config['hook_point']}")
-
-
-    # 3. Dataset Generation
     print("Initializing ActivationDatasetGenerator...")
     dataset_generator = ActivationDatasetGenerator(
-        model=base_model,
-        hook_point=config['hook_point'],
-        neuron_layer=config['neuron_layer'], # Can be redundant if hook_point is specific
-        neuron_index=config['neuron_index'],
-        device=device_str
+        model=base_model, hook_point=config['hook_point'],
+        neuron_layer=config['neuron_layer'], neuron_index=config['neuron_index'], device=device_str
     )
-
     activation_df: Optional[pd.DataFrame] = None
     if config['data_source'] == 'synthetic':
         print("Generating synthetic dataset...")
         activation_df = dataset_generator.generate_synthetic_dataset(
-            num_samples=config['num_samples'],
-            source_dataset_name=config['synthetic_source_dataset_name'],
-            source_dataset_config=config['synthetic_source_dataset_config'],
-            text_field=config['synthetic_text_field'],
-            min_text_length=config['synthetic_min_text_length'],
-            token_position=config['token_position'], # For extracting activations for the dataset labels
+            num_samples=config['num_samples'], source_dataset_name=config['synthetic_source_dataset_name'],
+            source_dataset_config=config['synthetic_source_dataset_config'], text_field=config['synthetic_text_field'],
+            min_text_length=config['synthetic_min_text_length'], token_position=config['token_position'], 
             output_csv_path=os.path.join(output_dir, "synthetic_activation_dataset.csv")
         )
     elif config['data_source'] == 'provided':
         if config['dataset_path'] is None or not os.path.exists(config['dataset_path']):
             raise FileNotFoundError(f"Provided dataset_path '{config['dataset_path']}' not found.")
         print(f"Loading provided dataset from: {config['dataset_path']}")
-        # Assuming the provided dataset is a CSV with a 'text' column
-        # We still need to process it to get activations.
         provided_texts_df = pd.read_csv(config['dataset_path'])
-        if 'text' not in provided_texts_df.columns:
-            raise ValueError("Provided dataset CSV must contain a 'text' column.")
-        
-        texts_for_activation = provided_texts_df['text'].tolist()[:config['num_samples']] # Limit samples
-        
+        if 'text' not in provided_texts_df.columns: raise ValueError("Provided dataset CSV must contain a 'text' column.")
+        texts_for_activation = provided_texts_df['text'].tolist()[:config['num_samples']] 
         activation_df = dataset_generator.generate_dataset_from_texts(
-            texts_for_activation,
-            token_position=config['token_position'],
+            texts_for_activation, token_position=config['token_position'],
             output_csv_path=os.path.join(output_dir, "provided_texts_activation_dataset.csv"),
             metadata={"source": "provided_csv", "original_path": config['dataset_path']}
         )
-    else:
-        raise ValueError(f"Invalid data_source: {config['data_source']}")
-
-    if activation_df is None or activation_df.empty:
-        raise ValueError("Dataset generation failed or resulted in an empty dataset.")
-
-    # Balance dataset if specified (simple binning for now)
-    if config.get("balance_dataset", False): # Add "balance_dataset": true to config to enable
+    else: raise ValueError(f"Invalid data_source: {config['data_source']}")
+    if activation_df is None or activation_df.empty: raise ValueError("Dataset generation failed or resulted in an empty dataset.")
+    if config.get("balance_dataset", False): 
         print("Balancing dataset...")
         activation_df = dataset_generator.balance_dataset(activation_df, num_bins=config['balance_dataset_bins'])
         activation_df.to_csv(os.path.join(output_dir, "balanced_activation_dataset.csv"), index=False)
-
-    # Prepare PyTorch Datasets
-    # Inputs are tokenized text, targets are activation values (or classes/token_ids for other output_types)
-    
-    # TODO: Handle different target types for classification/token prediction
-    # For 'token_binary'/'token_digit', targets need to be mapped to specific token IDs.
-    # For 'classification', targets need to be class indices (binned activations).
-    # This logic should be part of dataset preparation or ActivationDatasetGenerator.
-    # For now, assume 'activation_value' is directly usable or will be processed.
-    
-    # Example: For regression, targets are 'activation_value'
-    # For other types, this target processing needs to be more sophisticated.
-    # E.g., for token_binary: targets = (activation_df['activation_value'] > 0).astype(int)
-    # then map 0 to tokenizer.encode('off')[0] and 1 to tokenizer.encode('on')[0]
-    # This mapping needs access to the model's tokenizer.
-
-    # For now, let's assume a simple case for regression and prepare for that.
-    # The actual input to the ActivationPredictor model will be token IDs.
-    # We need to tokenize the 'text' column from activation_df.
     
     input_texts = activation_df['text'].tolist()
-    # Max length for padding/truncation - should be based on model's max sequence length
     if not hasattr(base_model, 'tokenizer') or base_model.tokenizer is None:
         raise AttributeError("Base model does not have a tokenizer. Cannot prepare dataset for PyTorch.")
     
-    # Now we know base_model.tokenizer is not None
     tokenizer = base_model.tokenizer
     max_len = tokenizer.model_max_length if hasattr(tokenizer, 'model_max_length') and tokenizer.model_max_length is not None else 512
     
-    # Tokenize all texts
-    # Using padding=True, truncation=True, return_tensors="pt"
-    # Note: TransformerLens to_tokens doesn't do batch tokenization with padding easily.
-    # Using HuggingFace tokenizer directly for this part.
-
-    # Ensure tokenizer has pad_token_id if it's missing (e.g. for GPT-2)
     current_pad_token_id = tokenizer.pad_token_id
     if current_pad_token_id is None:
         if tokenizer.eos_token_id is not None:
             tokenizer.pad_token_id = tokenizer.eos_token_id
             current_pad_token_id = tokenizer.eos_token_id
             print(f"Set tokenizer pad_token_id to eos_token_id: {tokenizer.eos_token_id}")
-        else:
-            # Fallback: if no EOS token ID either, this is problematic.
-            # For many models, 0 is a common choice if unk or pad is not set, but can be risky.
-            # Let's raise an error if no suitable pad token ID can be found.
-            raise ValueError("Tokenizer does not have a pad_token_id and eos_token_id is also missing. Cannot proceed with padding.")
-    
+        else: raise ValueError("Tokenizer does not have a pad_token_id and eos_token_id is also missing. Cannot proceed with padding.")
     if not isinstance(current_pad_token_id, int):
         raise TypeError(f"pad_token_id must be an integer, but found {current_pad_token_id} of type {type(current_pad_token_id)}")
 
-
     print("Tokenizing texts for PyTorch dataset...")
-    # Manually pad/truncate if using model.to_tokens in a loop, or use tokenizer directly
-    # For simplicity, let's assume we can get input_ids for the model.
-    # The ActivationPredictor expects input_ids.
-    # The dataset should yield (input_ids_tensor, target_tensor)
-    
-    # This part needs careful implementation based on how ActivationDatasetGenerator stores data
-    # and how ActivationPredictor expects its input.
-    # Let's assume activation_df has 'text' and 'activation_value'.
-    # We need to convert 'text' to input_ids for the model.
-    
-    # Simplified: Re-tokenize for the training data. This is not ideal if texts are long.
-    # Better: Store tokenized versions in ActivationDatasetGenerator or ensure it can provide them.
-    # For now, we'll re-tokenize.
-    
     all_input_ids = []
-    for text in tqdm(input_texts, desc="Tokenizing for training"): # tqdm was undefined, now imported
-        tokens = base_model.to_tokens(text, prepend_bos=True).squeeze(0) # Remove batch dim
-        # Manual padding/truncation to a fixed length (e.g., max_len)
-        if len(tokens) > max_len:
-            tokens = tokens[:max_len]
+    for text in tqdm(input_texts, desc="Tokenizing for training"): 
+        tokens = base_model.to_tokens(text, prepend_bos=True).squeeze(0) 
+        if len(tokens) > max_len: tokens = tokens[:max_len]
         elif len(tokens) < max_len:
-            # Ensure current_pad_token_id is an int for torch.full
             padding_val = int(current_pad_token_id) 
-            padding = torch.full((max_len - len(tokens),), padding_val, dtype=torch.long, device=tokens.device) # Ensure padding is on the same device
+            padding = torch.full((max_len - len(tokens),), padding_val, dtype=torch.long, device=tokens.device) 
             tokens = torch.cat((tokens, padding), dim=0)
         all_input_ids.append(tokens)
-    
     input_ids_tensor = torch.stack(all_input_ids)
     
-    # Targets:
-    # This needs to be adapted based on config['output_type']
-    if config['output_type'] == 'regression':
-        targets_tensor = torch.tensor(activation_df['activation_value'].values, dtype=torch.float32)
-    elif config['output_type'] == 'classification':
-        # Assume 'activation_value' needs to be binned into class indices
-        # This binning logic should ideally be in ActivationDatasetGenerator or a helper
-        # For now, placeholder:
-        # Example: pd.cut(activation_df['activation_value'], bins=config['num_classes_classification'], labels=False)
-        raise NotImplementedError("Classification target processing not fully implemented in pipeline.")
-    elif config['output_type'] in ['token_binary', 'token_digit']:
-        # Targets should be the token IDs for 'on'/'off' or '0'-'9'.
-        # This requires mapping activation_value to these token IDs.
-        raise NotImplementedError("Token-based target processing not fully implemented in pipeline.")
-    else:
-        raise ValueError(f"Unhandled output_type for target tensor creation: {config['output_type']}")
+    # Target processing based on output_type
+    output_type = config['output_type']
+    # Ensure activation_values is a NumPy array of floats for consistent processing
+    try:
+        activation_values = activation_df['activation_value'].values.astype(np.float64)
+    except Exception as e:
+        print(f"Error converting activation_values to float64 numpy array: {e}")
+        # Potentially inspect activation_df['activation_value'].dtype or sample values
+        raise TypeError("Could not convert 'activation_value' column to a numeric NumPy array.")
 
-    # Split data
+
+    if output_type == 'regression':
+        targets_tensor = torch.tensor(activation_values, dtype=torch.float32)
+    elif output_type == 'classification':
+        num_classes = config.get('num_classes_classification', 5)
+        # Ensure bins cover the full range, including min and max
+        min_val, max_val = activation_values.min(), activation_values.max() # Now should work on np.array
+        if min_val == max_val: # Handle case where all activations are the same
+             bins = np.linspace(min_val - 0.5, max_val + 0.5, num_classes + 1)
+        else:
+             bins = np.linspace(min_val, max_val + 1e-6, num_classes + 1)
+        
+        target_labels = pd.cut(activation_values, bins=bins, labels=False, include_lowest=True, right=True)
+        # Handle potential NaNs if a value is outside bins (shouldn't happen with include_lowest and epsilon)
+        target_labels = np.nan_to_num(target_labels, nan=0).astype(int) # Replace NaN with class 0
+        targets_tensor = torch.tensor(target_labels, dtype=torch.long)
+        print(f"Classification targets created with {num_classes} classes. Bins: {bins}")
+    elif output_type == 'token_binary':
+        # Ensure token_on_id and token_off_id are set in config
+        if config.get("token_on_id") is None:
+            config["token_on_id"] = tokenizer.encode(" on", add_special_tokens=False)[0] # Common to add space
+            config["token_off_id"] = tokenizer.encode(" off", add_special_tokens=False)[0]
+            print(f"Set token_on_id: {config['token_on_id']}, token_off_id: {config['token_off_id']}")
+
+        target_labels = [config["token_on_id"] if act > 0 else config["token_off_id"] for act in activation_values]
+        targets_tensor = torch.tensor(target_labels, dtype=torch.long)
+    elif output_type == 'token_digit':
+        # Ensure token_digit_ids are set
+        if not config.get("token_digit_ids"):
+            config["token_digit_ids"] = [tokenizer.encode(f" {i}", add_special_tokens=False)[0] for i in range(10)]
+            print(f"Set token_digit_ids: {config['token_digit_ids']}")
+        
+        token_map = config["token_digit_ids"]
+        if len(token_map) != 10: raise ValueError("token_digit_ids must contain 10 token IDs.")
+
+        mean_act, std_act = np.mean(activation_values), np.std(activation_values)
+        min_val_range = mean_act - 2 * std_act
+        max_val_range = mean_act + 2 * std_act
+        
+        # Create 10 bins for the range [min_val_range, max_val_range]
+        # np.digitize will assign values to bins 1 through 10 (if 9 bin edges)
+        # or 0 through 9 if we use it carefully.
+        # We want to map to indices 0-9 for token_map.
+        if max_val_range == min_val_range: # Handle case of zero std_dev
+            bins = np.linspace(min_val_range - 0.5, max_val_range + 0.5, 10) # 9 edges for 10 bins
+        else:
+            bins = np.linspace(min_val_range, max_val_range, 10) # 9 edges for 10 bins (0-8)
+        
+        # np.digitize returns indices from 1. We subtract 1 for 0-based indexing.
+        # Clip values to be within the defined range before digitizing to avoid out-of-bounds.
+        clipped_activations = np.clip(activation_values, min_val_range, max_val_range)
+        
+        # `bins` for np.digitize should be the edges. For N bins, N-1 edges.
+        # If we have 10 target tokens (0-9), we need 9 bin edges to divide the space into 10 regions.
+        # The Nth token corresponds to values >= bins[N-1].
+        # The 0th token corresponds to values < bins[0].
+        # So, if bins has 9 edges, digitize returns 0-9 for values within range.
+        # Let's use 9 edges (10 bins).
+        if max_val_range == min_val_range:
+             bin_edges = np.linspace(min_val_range - 0.5, max_val_range + 0.5, 10 -1)
+        else:
+             bin_edges = np.linspace(min_val_range, max_val_range, 10 -1)
+
+
+        target_indices = np.digitize(clipped_activations, bins=bin_edges, right=False) # right=False: bin[i-1] <= x < bin[i]
+        target_indices = np.clip(target_indices, 0, 9) # Ensure indices are within 0-9
+
+        target_labels = [token_map[idx] for idx in target_indices]
+        targets_tensor = torch.tensor(target_labels, dtype=torch.long)
+        print(f"Token_digit targets created. Range: [{min_val_range:.2f}, {max_val_range:.2f}], Bins used for digitize: {bin_edges}")
+    else:
+        raise ValueError(f"Unhandled output_type for target tensor creation: {output_type}")
+
     train_idx, val_idx = train_test_split(range(len(input_ids_tensor)), test_size=0.25, random_state=seed)
     
-    train_inputs = input_ids_tensor[train_idx]
-    val_inputs = input_ids_tensor[val_idx]
-    train_targets = targets_tensor[train_idx]
-    val_targets = targets_tensor[val_idx]
+    train_inputs, val_inputs = input_ids_tensor[train_idx], input_ids_tensor[val_idx]
+    train_targets, val_targets = targets_tensor[train_idx], targets_tensor[val_idx]
     
     train_torch_dataset = TensorDataset(train_inputs, train_targets)
     val_torch_dataset = TensorDataset(val_inputs, val_targets)
     print(f"Created PyTorch datasets. Train size: {len(train_torch_dataset)}, Val size: {len(val_torch_dataset)}")
 
-    # 4. Create Prediction Model (ActivationPredictor)
     print("Initializing ActivationPredictor model for training...")
-    # Determine base_model_output_dim for regression/classification heads
-    # This depends on the feature_extraction_hook_point
-    # If it's 'blocks.L.hook_resid_post', dim is d_model. If 'blocks.L.mlp.hook_post', dim is d_mlp.
-    # This needs to be robust. For now, assume d_model if not specified.
-    # A helper function in TransformerLens (like get_shape_for_hook_point) would be ideal.
     
-    # Simplified: Assume feature_extraction_hook_point gives features of d_model size
-    # This should be configured more precisely.
-    # If config['feature_extraction_hook_point'] is like '...mlp.hook_post', then output_dim is model.cfg.d_mlp
-    # If it's like '...hook_resid_post', then output_dim is model.cfg.d_model
-    # For now, let's require it in config or make a simple guess.
-    
-    # Default feature extraction hook point if not set for regression/classification
-    if config['output_type'] in ['regression', 'classification'] and config.get('feature_extraction_hook_point') is None:
-        # Default to last layer's residual stream output
+    if output_type in ['regression', 'classification'] and config.get('feature_extraction_hook_point') is None:
         last_layer_idx = base_model.cfg.n_layers - 1
         config['feature_extraction_hook_point'] = tl_get_act_name("resid_post", last_layer_idx)
         print(f"Defaulted feature_extraction_hook_point to: {config['feature_extraction_hook_point']}")
 
-    # Determine base_model_output_dim based on the hook point
-    # This is a simplification. A robust way would be to run a dummy input and check shape.
-    base_model_output_dim_for_head = base_model.cfg.d_model # Default
-    
-    # Correctly check feature_extraction_hook_point before membership test
+    base_model_output_dim_for_head = base_model.cfg.d_model 
     feature_extraction_hook_point_val = config.get('feature_extraction_hook_point')
-    if isinstance(feature_extraction_hook_point_val, str): # Ensure it's a string before 'in'
+    if isinstance(feature_extraction_hook_point_val, str): 
         if 'mlp.hook_post' in feature_extraction_hook_point_val:
             base_model_output_dim_for_head = base_model.cfg.d_mlp
         elif 'attn_out' in feature_extraction_hook_point_val:
-            base_model_output_dim_for_head = base_model.cfg.d_model # Attn out adds to residual stream
-    
-    # Update config with this determined/guessed dimension if it was used
+            base_model_output_dim_for_head = base_model.cfg.d_model 
     config['base_model_output_dim_for_head'] = base_model_output_dim_for_head
 
-
     predictor_model = ActivationPredictor(
-        base_model=base_model,
-        prediction_head_type=config['output_type'],
-        base_model_output_dim=base_model_output_dim_for_head if config['output_type'] in ['regression', 'classification'] else None,
-        num_classes=config.get('num_classes_classification') if config['output_type'] == 'classification' else None,
+        base_model=base_model, prediction_head_type=output_type,
+        base_model_output_dim=base_model_output_dim_for_head if output_type in ['regression', 'classification'] else None,
+        num_classes=config.get('num_classes_classification') if output_type == 'classification' else None,
         device=device_str
     )
 
-    # 5. Train the Model
     print("Initializing PredictorTrainer...")
     trainer = PredictorTrainer(
-        model=predictor_model,
-        config=config, # Pass the full config dictionary
-        train_dataset=train_torch_dataset,
-        val_dataset=val_torch_dataset,
-        device=device_str
+        model=predictor_model, config=config, 
+        train_dataset=train_torch_dataset, val_dataset=val_torch_dataset, device=device_str
     )
     
     print("Starting training...")
     trainer.train()
 
-    # 6. Evaluate and Visualize Results (some is done in trainer, more can be added here)
     print("Pipeline finished. Results and artifacts are in:", output_dir)
-    # TODO: Add final evaluation on a test set if available.
-    # TODO: Generate and save final visualizations/reports.
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Neuron Self-Report Pipeline")
     parser.add_argument("--config", type=str, default="config.json",
                         help="Path to the JSON configuration file for the pipeline.")
     args = parser.parse_args()
-    
     main_pipeline(args.config)

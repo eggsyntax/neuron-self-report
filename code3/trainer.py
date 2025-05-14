@@ -1,6 +1,7 @@
 # trainer.py
 # PredictorTrainer: For training with monitoring capabilities
 
+import os # Added os import
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -224,6 +225,11 @@ class PredictorTrainer:
         train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
         val_loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False) if self.val_dataset else None
         
+        history = {"train_loss": [], "val_loss": []}
+        if val_loader: # Add keys for other val metrics if they are computed
+            # Example: history["val_accuracy"] = []
+            pass
+
         best_val_loss = float('inf')
         epochs_no_improve = 0
         early_stopping_patience = self.config.get('early_stopping_patience', 3)
@@ -231,12 +237,17 @@ class PredictorTrainer:
         for epoch in range(self.epochs):
             print(f"\nEpoch {epoch+1}/{self.epochs}")
             avg_train_loss = self.train_epoch(train_loader)
+            history["train_loss"].append(avg_train_loss)
             print(f"Average Training Loss: {avg_train_loss:.4f}")
             
             log_dict = {"epoch": epoch + 1, "avg_train_loss": avg_train_loss}
             
             if val_loader:
                 val_metrics = self.evaluate(val_loader)
+                history["val_loss"].append(val_metrics['val_loss'])
+                # for key, value in val_metrics.items(): # If other metrics are added
+                #     if key not in history: history[key] = []
+                #     history[key].append(value)
                 print(f"Validation Metrics: {val_metrics}")
                 log_dict.update(val_metrics)
                 
@@ -244,27 +255,31 @@ class PredictorTrainer:
                     best_val_loss = val_metrics['val_loss']
                     epochs_no_improve = 0
                     # TODO: Save best model checkpoint
-                    # torch.save(self.model.state_dict(), "best_model.pt")
-                    # print("Saved best model checkpoint.")
+                    # model_save_path = os.path.join(self.config.get("output_dir", "output"), "best_model.pt")
+                    # torch.save(self.model.state_dict(), model_save_path)
+                    # print(f"Saved best model checkpoint to {model_save_path}")
                 else:
                     epochs_no_improve += 1
             
             if self.use_wandb:
                 wandb.log(log_dict)
 
-            # TODO: Implement activation distribution monitoring and visualization generation
+            # TODO: Implement activation distribution monitoring
             # This could be done at the end of each epoch or less frequently.
             # Example: self.monitor_activation_distributions()
-            # Example: self.generate_training_visualizations()
-
-            if val_loader and epochs_no_improve >= early_stopping_patience:
+            
+            if val_loader and epochs_no_improve >= early_stopping_patience and early_stopping_patience > 0:
                 print(f"Early stopping triggered after {early_stopping_patience} epochs with no improvement.")
                 break
         
+        # Generate and save visualizations at the end of training
+        self.generate_training_visualizations(history)
+
         if self.use_wandb:
             wandb.finish()
         
         print("Training finished.")
+        return history # Return history for potential further use
 
     # Placeholder for monitoring and visualization methods
     def monitor_activation_distributions(self):
@@ -274,22 +289,40 @@ class PredictorTrainer:
         pass
 
     def generate_training_visualizations(self, history: Dict[str, List[float]]):
-        # Generate plots for training/validation loss, other metrics over epochs.
-        # history might be a dict like {'train_loss': [...], 'val_loss': [...]}
-        print("Placeholder: Generating training visualizations...")
-        # Example:
-        # plt.figure(figsize=(10,5))
-        # plt.plot(history['train_loss'], label='Train Loss')
-        # if 'val_loss' in history:
-        #     plt.plot(history['val_loss'], label='Validation Loss')
-        # plt.title('Training History')
-        # plt.xlabel('Epoch')
-        # plt.ylabel('Loss')
-        # plt.legend()
-        # if self.use_wandb:
-        #     wandb.log({"training_history_plot": wandb.Image(plt)})
-        # plt.show() # or savefig
-        pass
+        """
+        Generates plots for training/validation loss and saves them.
+        Logs plots to W&B if enabled.
+        """
+        print("Generating training visualizations...")
+        output_dir = self.config.get("output_dir", "output")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        epochs_ran = len(history['train_loss'])
+        epoch_axis = range(1, epochs_ran + 1)
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(epoch_axis, history['train_loss'], label='Train Loss', marker='o')
+        if 'val_loss' in history and history['val_loss']: # Check if val_loss was recorded
+            plt.plot(epoch_axis, history['val_loss'], label='Validation Loss', marker='x')
+        
+        plt.title(f"Training History ({self.config.get('wandb_run_name', 'run')})")
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        
+        plot_save_path = os.path.join(output_dir, "training_loss_history.png")
+        try:
+            plt.savefig(plot_save_path)
+            print(f"Training history plot saved to {plot_save_path}")
+            if self.use_wandb:
+                wandb.log({"training_history_plot": wandb.Image(plot_save_path)})
+        except Exception as e:
+            print(f"Error saving training history plot: {e}")
+        plt.close() # Close the figure to free memory
+
+        # TODO: Add plots for other metrics if they are collected in history
 
 # Example Usage (conceptual, real usage from main pipeline)
 if __name__ == '__main__':
@@ -310,8 +343,13 @@ if __name__ == '__main__':
     else:
         dummy_device = "cpu"
     
-    try:
-        dummy_base_model = HookedTransformer.from_pretrained("gpt2-small", device=dummy_device) # Small model
+    try: # This is the single, correct try block for the example code
+        # Ensure output directory exists for the example
+        example_output_dir = "output/trainer_example"
+        if not os.path.exists(example_output_dir):
+            os.makedirs(example_output_dir, exist_ok=True)
+
+        dummy_base_model = HookedTransformer.from_pretrained("gpt2-small", device=dummy_device)
         dummy_predictor_model = ActivationPredictor(
             base_model=dummy_base_model,
             prediction_head_type="regression",
@@ -336,12 +374,12 @@ if __name__ == '__main__':
             "epochs": 3, # Short for example
             "batch_size": 16,
             "output_type": "regression", # Matches dummy_predictor_model
-            "unfreeze_strategy": "head_only", # Train only the new head
-            "feature_extraction_hook_point": f"blocks.{dummy_base_model.cfg.n_layers - 1}.hook_resid_post", # Example
+            "unfreeze_strategy": "head_only", 
+            "feature_extraction_hook_point": f"blocks.{dummy_base_model.cfg.n_layers - 1}.hook_resid_post", 
             "target_token_position_for_features": "last",
-            "use_wandb": False, # Set to True and configure if you want to test W&B
-            # "wandb_project": "my-test-project", 
-            # "wandb_run_name": "trainer_example_run"
+            "use_wandb": False, 
+            "output_dir": example_output_dir, # For saving plots from example
+            "wandb_run_name": "trainer_example_run_local"
         }
 
         print(f"Setting up trainer with device: {dummy_device}")

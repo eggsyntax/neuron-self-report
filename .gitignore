@@ -13,6 +13,9 @@ code1/test_predictor_output
 code1/mech_interp/notebooks/*.png
 /code1/CLAUDE.md
 
+code3/output/*
+code3/previous-outputs/*
+
 **/CLAUDE.local.md
 
 **/.claude/settings.local.json

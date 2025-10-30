@@ -23,73 +23,23 @@ from scanner import NeuronScanner
 from architecture import ActivationPredictor
 from trainer import PredictorTrainer
 
-# Define sensible defaults for configuration parameters (as per plan.md)
-DEFAULT_CONFIG = {
-    "model_name": "gpt2-small",
-    "neuron_layer": 0, # Example, will be determined by scanner or user
-    "neuron_index": 0, # Example, will be determined by scanner or user
-    "hook_point": None, # To be constructed, e.g., f"blocks.{layer}.mlp.hook_post"
-    "dataset_path": None, # Path to a user-provided dataset (optional)
-    "learning_rate": 1e-4,
-    "batch_size": 32,
-    "output_type": "regression", # 'regression', 'classification', 'token_binary', 'token_digit'
-    "data_source": "synthetic", # 'synthetic' or 'provided'
-    "token_position": "last", # 'last' or an integer index for activation extraction for dataset
-    "num_samples": 2000, # Total number of samples to use/generate
-    "output_dir": "output/", # Default output directory within code3/
-    "epochs": 10,
-    "unfreeze_strategy": "head_only", # 'head_only', 'all_layers', 'layers_after_target', 'selective_components'
-    "components_to_unfreeze": [], # For 'selective_components' strategy
-    "device": None, # Auto-detect: 'mps', 'cuda', 'cpu'
-    "use_wandb": False,
-    "wandb_project": "neuron-self-report",
-    "wandb_run_name": None, # Auto-generate if None
-    "early_stopping_patience": 3,
-    "random_seed": 42, # For reproducibility
-    # Scanner specific defaults
-    "run_neuron_scanner": False, # Set to true to run the scanner
-    "scanner_num_texts": 100, # Number of texts to use for scanning
-    "scanner_texts_source_dataset_name": "stas/openwebtext-10k", # A smaller, diverse dataset for scanning
-    "scanner_texts_source_dataset_config": None, # No specific config for openwebtext-10k usually
-    "scanner_texts_text_field": "text",
-    "scanner_texts_min_length": 10,
-    "scanner_layers_to_scan": None, # None for all layers, or list of layer indices
-    "scanner_target_token_position": "last",
-    "scanner_top_n_to_display": 5,
-    "scanner_variance_weight": 0.5,
-    "scanner_range_weight": 0.5,
-    "scanner_auto_select_top_neuron": True, # If true, automatically use the top scanned neuron
-    # ActivationPredictor specific
-    "feature_extraction_hook_point": None, # Hook point for features fed to the predictor head
-                                           # e.g. f"blocks.{model.cfg.n_layers-1}.hook_resid_post"
-    "target_token_position_for_features": "last", # Token position for features for the head
-    "num_classes_classification": 5, # If output_type is 'classification'
-    "token_on_id": None, # Will be populated with tokenizer.encode(" on")[0]
-    "token_off_id": None, # Will be populated with tokenizer.encode(" off")[0]
-    "token_digit_ids": [], # Will be populated with tokenizer.encode(" 0")[0] to tokenizer.encode(" 9")[0]
-    # Synthetic dataset generation
-    "synthetic_source_dataset_name": "wikipedia",
-    "synthetic_source_dataset_config": "20220301.en",
-    "synthetic_text_field": "text",
-    "synthetic_min_text_length": 20,
-    "balance_dataset_bins": 10, # For ActivationDatasetGenerator.balance_dataset
-}
+# DEFAULT_CONFIG dictionary has been removed. config.json is the single source of truth.
 
 def load_config(config_path: str) -> Dict[str, Any]:
-    """Loads a JSON configuration file and merges with defaults."""
+    """Loads a JSON configuration file.
+    Raises FileNotFoundError or json.JSONDecodeError if issues occur.
+    """
     try:
         with open(config_path, 'r') as f:
             user_config = json.load(f)
+        print(f"Successfully loaded configuration from {config_path}")
+        return user_config
     except FileNotFoundError:
-        print(f"Warning: Config file {config_path} not found. Using default configuration.")
-        return DEFAULT_CONFIG.copy()
-    except json.JSONDecodeError:
-        print(f"Error: Config file {config_path} is not valid JSON. Using default configuration.")
-        return DEFAULT_CONFIG.copy()
-        
-    config = DEFAULT_CONFIG.copy()
-    config.update(user_config) # User config overrides defaults
-    return config
+        print(f"Error: Config file {config_path} not found.")
+        raise
+    except json.JSONDecodeError as e:
+        print(f"Error: Config file {config_path} is not valid JSON. Details: {e}")
+        raise
 
 def setup_output_directory(config: Dict[str, Any]) -> str:
     """Sets up the output directory, archiving previous run if it exists."""
@@ -300,7 +250,18 @@ def main_pipeline(config_path: str):
 
 
     if output_type == 'regression':
-        targets_tensor = torch.tensor(activation_values, dtype=torch.float32)
+        # Normalize targets for regression
+        act_mean = np.mean(activation_values)
+        act_std = np.std(activation_values)
+        if act_std == 0: # Avoid division by zero if all activations are the same
+            print("Warning: Activation values have zero standard deviation. Using unnormalized targets.")
+            normalized_activations = activation_values 
+        else:
+            normalized_activations = (activation_values - act_mean) / act_std
+        targets_tensor = torch.tensor(normalized_activations, dtype=torch.float32)
+        config['target_normalization_mean'] = float(act_mean) # Store for potential denormalization
+        config['target_normalization_std'] = float(act_std) if act_std > 0 else 1.0
+        print(f"Regression targets normalized (mean={act_mean:.4f}, std={act_std:.4f})")
     elif output_type == 'classification':
         num_classes = config.get('num_classes_classification', 5)
         # Ensure bins cover the full range, including min and max

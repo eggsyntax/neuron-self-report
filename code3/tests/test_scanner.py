@@ -1,5 +1,6 @@
 # tests/test_scanner.py
-import pytest
+# pylint: disable=import-error
+import pytest # type: ignore
 import torch
 import pandas as pd
 import numpy as np

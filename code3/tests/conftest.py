@@ -1,5 +1,6 @@
 # tests/conftest.py
-import pytest
+# pylint: disable=import-error
+import pytest # type: ignore
 import torch
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 

@@ -1,2 +1,4 @@
-See README in code1 directory
+This was me investigating whether I could train a small LLM to report the activation strength of a particular neuron. See presentation for more info.
+
+code1 is a dir that I spent a ton of time with Claude Code on, and in the end it kind of worked but neither Andy A nor I really trusted its code. code2 and code3 were (IIRC) abortive attempts to rewrite, before SPAR ended and I decided to move on to higher-level self report. 
 

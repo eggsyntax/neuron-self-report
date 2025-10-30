@@ -1,5 +1,6 @@
 # tests/test_architecture.py
-import pytest
+# pylint: disable=import-error
+import pytest # type: ignore
 import torch
 import torch.nn as nn
 from unittest.mock import patch, MagicMock

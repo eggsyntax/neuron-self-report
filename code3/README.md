@@ -1,3 +1,5 @@
+# Not yet functional (and may never be), use code1/ version instead
+
 # Neuron Self-Report
 
 This project implements a system for training transformer models to "self-report" their internal activation values. The goal is to explore a novel approach to interpretability by leveraging a model's own representations to predict its internal states.

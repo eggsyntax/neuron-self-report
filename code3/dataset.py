@@ -46,15 +46,47 @@ class ActivationDatasetGenerator:
         if self.neuron_index is not None:
             # Try to get a sample activation to check dimensions
             try:
-                # A short dummy input
-                _ = self.model.run_with_hooks(
-                    "dummy text",
-                    fwd_hooks=[(self.hook_point, lambda act, hook: act[:, :, self.neuron_index].unsqueeze(-1))]
+                # A short dummy input.
+                if self.model.tokenizer is None:
+                    # This should ideally be handled by ensuring the model always has a tokenizer.
+                    # Forcing a tokenizer here might have side effects if the model was intentionally tokenizer-free.
+                    print("Warning: Model does not have a tokenizer. Pre-validation of neuron_index might fail or be inaccurate if 'dummy text' cannot be tokenized.")
+
+                def validation_hook_fn(act: torch.Tensor, hook: Any): # hook type can be HookPoint or str
+                    # Perform the indexing to check bounds. If it fails, IndexError is raised.
+                    _ = act[..., self.neuron_index] 
+                    # Crucially, return the original activation to not break the ongoing forward pass
+                    return act
+
+                self.model.run_with_hooks(
+                    "dummy text", # This will use the model's tokenizer
+                    fwd_hooks=[(self.hook_point, validation_hook_fn)] 
                 )
             except IndexError:
-                raise ValueError(f"Neuron index {self.neuron_index} is out of bounds for hook_point {self.hook_point}.")
+                # This is the expected error if neuron_index is out of bounds
+                actual_dim_size = "unknown"
+                try: # Try to get the actual dimension size for a better error message
+                    temp_act_cache = {}
+                    def get_shape_hook(act, hook):
+                        temp_act_cache['shape'] = act.shape
+                        return act # Return original act
+                    # Use a non-empty input that the tokenizer can handle
+                    # If tokenizer is None, this will fail, but we've warned above.
+                    sample_input_for_shape = self.model.to_tokens("abc") if self.model.tokenizer is not None else torch.tensor([[0,1,2]])
+                    self.model.run_with_hooks(sample_input_for_shape.to(self.device), fwd_hooks=[(self.hook_point, get_shape_hook)])
+                    if 'shape' in temp_act_cache:
+                        actual_dim_size = temp_act_cache['shape'][-1]
+                except Exception as shape_e:
+                    print(f"Note: Could not determine exact dimension size during IndexError handling: {shape_e}")
+                    pass 
+                
+                err_msg = f"Neuron index {self.neuron_index} is out of bounds for hook_point {self.hook_point}."
+                if actual_dim_size != "unknown":
+                    err_msg += f" Activation dimension size is {actual_dim_size} (valid indices 0 to {actual_dim_size-1})."
+                raise ValueError(err_msg)
             except Exception as e:
-                print(f"Warning: Could not pre-validate neuron_index {self.neuron_index} for hook_point {self.hook_point}. Error: {e}")
+                # Other errors during the dummy forward pass
+                print(f"Warning: Could not robustly pre-validate neuron_index {self.neuron_index} for hook_point {self.hook_point}. Error during dummy forward pass: {e}")
         
         print(f"ActivationDatasetGenerator initialized for model: {self.model.cfg.model_name}, hook_point: {self.hook_point}, neuron_index: {self.neuron_index}, device: {self.device}")
 
